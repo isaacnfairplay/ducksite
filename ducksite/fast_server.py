@@ -1,7 +1,9 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 
 from .config import ProjectConfig
+from .forms import discover_forms, process_form_submission
 
 
 def create_app(cfg: ProjectConfig):
@@ -13,7 +15,7 @@ def create_app(cfg: ProjectConfig):
       - uvicorn
     """
     try:
-        from fastapi import FastAPI
+        from fastapi import FastAPI, Request
         from fastapi.staticfiles import StaticFiles
     except ImportError as e:
         raise RuntimeError(
@@ -22,6 +24,34 @@ def create_app(cfg: ProjectConfig):
         ) from e
 
     app = FastAPI()
+    forms = discover_forms(cfg)
+
+    @app.post("/api/forms/submit")
+    async def submit_form(request: Request):
+        ctype = request.headers.get("content-type", "")
+        payload: dict = {}
+        files: dict = {}
+
+        if ctype.startswith("multipart/form-data"):
+            form = await request.form()
+            for key, value in form.multi_items():
+                if hasattr(value, "read"):
+                    files[key] = await value.read()
+                else:
+                    try:
+                        payload[key] = json.loads(value)
+                    except Exception:
+                        payload[key] = value
+        else:
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+
+        form_id = payload.get("form_id")
+        if not form_id or form_id not in forms:
+            return {"error": "unknown form"}
+        return process_form_submission(cfg, forms[form_id], payload, files or None)
 
     # Serve everything under /, with index.html resolution.
     app.mount(

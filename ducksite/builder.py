@@ -7,6 +7,7 @@ from typing import Dict, List
 import duckdb
 import http.server
 import json
+import cgi
 import shutil
 import socketserver
 import threading
@@ -30,6 +31,7 @@ from .markdown_parser import parse_markdown_page, build_page_config
 from .queries import NamedQuery, build_file_source_queries, load_model_queries
 from .symlinks import build_symlinks
 from .utils import ensure_dir
+from .forms import discover_forms, process_form_submission
 
 
 class CssAsset(StrEnum):
@@ -328,6 +330,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
     from .watcher import watch_and_build
 
     cfg = load_project_config(root)
+    forms_map = discover_forms(cfg)
 
     def watch_loop() -> None:
         watch_and_build(root, interval=2.0)
@@ -380,6 +383,62 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 return upstream
 
             return super().translate_path(path)
+
+        def do_POST(self):
+            if self.path != "/api/forms/submit":
+                return super().do_POST()
+
+            ctype = self.headers.get("Content-Type", "")
+            payload: Dict[str, object] = {}
+            files: Dict[str, bytes] = {}
+            if ctype.startswith("multipart/form-data"):
+                environ = {
+                    "REQUEST_METHOD": "POST",
+                    "CONTENT_TYPE": ctype,
+                }
+                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+                for key in form.keys():
+                    field = form[key]
+                    if getattr(field, "filename", None):
+                        files[key] = field.file.read()
+                    else:
+                        try:
+                            payload[key] = json.loads(field.value)
+                        except Exception:
+                            payload[key] = field.value
+            else:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length > 0 else b"{}"
+                try:
+                    payload = json.loads(raw.decode("utf-8"))
+                except json.JSONDecodeError:
+                    payload = {}
+
+            form_id = payload.get("form_id")
+            if not form_id or form_id not in forms_map:
+                msg = json.dumps({"error": "unknown form"}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(msg)))
+                self.end_headers()
+                self.wfile.write(msg)
+                return
+
+            try:
+                result = process_form_submission(cfg, forms_map[form_id], payload, files)
+                body = json.dumps(result).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except Exception as e:
+                msg = json.dumps({"error": str(e)}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(msg)))
+                self.end_headers()
+                self.wfile.write(msg)
 
     class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
         allow_reuse_address = True

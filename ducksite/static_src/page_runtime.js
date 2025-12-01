@@ -6,6 +6,7 @@ import { initInputsFromUrl, createInputApi } from "./inputs.js";
 import { initDuckDB } from "./duckdb_runtime.js";
 import { renderAll } from "./render.js";
 import { initSqlEditor } from "./sql_editor.js";
+import { initFormsUI } from "./forms.js";
 
 export async function initPage() {
   console.debug("[ducksite] initPage: start");
@@ -20,6 +21,8 @@ export async function initPage() {
   let inputs = initInputsFromUrl(pageConfig.inputs || {});
   createInputApi(inputs, pageConfig.inputs || {});
   console.debug("[ducksite] initPage: inputs after URL init", inputs);
+
+  initFormsUI(inputs);
 
   // 2) Initialise DuckDB once
   const duckdbBundle = await initDuckDB();

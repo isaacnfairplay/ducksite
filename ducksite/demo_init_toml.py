@@ -38,6 +38,7 @@ def init_demo_toml(root: Path) -> None:
 
             [dirs]
             DIR_FAKE = "fake_upstream"
+            DIR_FORMS = "static/forms"
 
             [[file_sources]]
             # Base demo file-source view over all demo Parquet files.
