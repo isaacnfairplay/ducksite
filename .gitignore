@@ -1,0 +1,9 @@
+*__pycache__*
+.venv
+demo/*
+ducksite.egg-info/*
+ai.md
+uv.lock
+reload.bat
+extract_md_ai.py
+codebase.md

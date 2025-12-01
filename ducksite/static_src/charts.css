@@ -1,0 +1,63 @@
+/* ducksite/static_src/charts.css */
+/* Chart sizing & container queries for ducksite visualisations. */
+
+/*
+  Each ECharts chart lives in a .viz-container:
+    <div class="viz-container" data-viz-id="..."></div>
+
+  We treat .viz-container itself as the queryable container, similar to a
+  "chart-wrap" pattern. ECharts just fills whatever box we give it.
+*/
+
+.viz-container {
+  container-type: inline-size;       /* Enable container queries on width */
+  aspect-ratio: 16 / 9;              /* Keep a pleasant shape */
+  min-height: 260px;                 /* Avoid tiny pancakes */
+  max-height: 70vh;                  /* Don’t dominate very short viewports */
+  inline-size: 100%;
+  block-size: auto;
+  overflow: hidden;
+}
+
+/* Scale padding / typography with the container width, not the viewport. */
+@container (min-width: 360px) {
+  .viz-container {
+    padding: 0.75rem 0.75rem 0.4rem;
+  }
+}
+
+@container (min-width: 520px) {
+  .viz-container {
+    padding: 1rem 1rem 0.5rem;
+  }
+}
+
+@container (min-width: 720px) {
+  .viz-container {
+    padding: 1.25rem 1.25rem 0.6rem;
+  }
+}
+
+/* Optional legend / chip helpers if authors choose to add them */
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+
+.chip {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* Fallback when container queries aren’t supported. */
+@supports not (container-type: inline-size) {
+  .viz-container {
+    height: min(70vh, 60vw);
+  }
+}

@@ -1,0 +1,24 @@
+[project]
+name = "ducksite"
+version = "0.1.0"
+description = "Static DuckDB-powered dashboard builder"
+requires-python = ">=3.12"
+
+dependencies = [
+  "duckdb",
+  "markdown>=3.10",
+]
+
+[project.scripts]
+ducksite = "ducksite.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+include = ["ducksite"]
+exclude = ["demo"]
