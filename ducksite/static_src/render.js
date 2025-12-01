@@ -272,6 +272,54 @@ function rewriteParquetPathsHttp(sqlText) {
   return rewritten;
 }
 
+function sanitizeName(name) {
+  return String(name || "").replace(/[^A-Za-z0-9_]/g, "_");
+}
+
+function buildDerivedSqlWithFormatting(baseSql, chartFormatSpec, tableFormatSpec) {
+  const trimmed = baseSql.trim().replace(/^METRICS\s*/i, "");
+  const cleanBase = trimmed.replace(/;\s*$/, "");
+
+  const extras = [];
+
+  if (chartFormatSpec) {
+    for (const [target, spec] of Object.entries(chartFormatSpec)) {
+      const safe = sanitizeName(target);
+      if (spec.color_expr) {
+        extras.push(`${spec.color_expr} AS __fmt_chart_${safe}_color`);
+      }
+      if (spec.highlight_expr) {
+        extras.push(`${spec.highlight_expr} AS __fmt_chart_${safe}_highlight`);
+      }
+      if (spec.label_color_expr) {
+        extras.push(`${spec.label_color_expr} AS __fmt_chart_${safe}_label_color`);
+      }
+    }
+  }
+
+  if (tableFormatSpec) {
+    for (const [col, spec] of Object.entries(tableFormatSpec)) {
+      const safe = sanitizeName(col);
+      if (spec.bg_color_expr) {
+        extras.push(`${spec.bg_color_expr} AS __fmt_tbl_${safe}_bg`);
+      }
+      if (spec.fg_color_expr) {
+        extras.push(`${spec.fg_color_expr} AS __fmt_tbl_${safe}_fg`);
+      }
+      if (spec.highlight_expr) {
+        extras.push(`${spec.highlight_expr} AS __fmt_tbl_${safe}_hl`);
+      }
+    }
+  }
+
+  if (extras.length === 0) {
+    return cleanBase;
+  }
+
+  const selectExtras = extras.join(", ");
+  return `WITH base AS (${cleanBase}) SELECT base.*, ${selectExtras} FROM base`;
+}
+
 async function loadSqlText(sqlUrl) {
   console.debug("[ducksite] loadSqlText:", sqlUrl);
   const resp = await fetch(sqlUrl);
@@ -595,6 +643,28 @@ async function renderChart(container, vizSpec, rows, id) {
   const rawType = vizSpec.type || "bar";
   const type = String(rawType).trim();
 
+  const truthyFlag = (v) => {
+    if (v === null || v === undefined) return false;
+    const s = String(v).toLowerCase();
+    return !(s === "false" || s === "0" || s === "");
+  };
+
+  const buildPoint = (value, color, highlight, baseValue = null) => {
+    const hasColor = color !== null && color !== undefined && color !== "";
+    const hasHighlight = truthyFlag(highlight);
+    const payload = baseValue !== null ? { value: baseValue } : { value };
+    if (!hasColor && !hasHighlight) {
+      return baseValue !== null ? baseValue : value;
+    }
+    if (hasColor) {
+      payload.itemStyle = { color };
+    }
+    if (hasHighlight) {
+      payload.emphasis = { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,0.3)" } };
+    }
+    return payload;
+  };
+
   // --- Advanced "option_column" mode for arbitrary ECharts options ---
   //
   // DSL:
@@ -683,7 +753,7 @@ async function renderChart(container, vizSpec, rows, id) {
     const categories = rows.map((r) => getField(r, xKey));
     const values = rows.map((r) => getField(r, yKey));
 
-    return {
+    const option = {
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "axis" },
       xAxis: {
@@ -700,6 +770,17 @@ async function renderChart(container, vizSpec, rows, id) {
         },
       ],
     };
+    const fmt = vizSpec.format || {};
+    if (fmt && fmt[yKey]) {
+      const safe = sanitizeName(yKey);
+      option.series[0].data = rows.map((r, idx) => {
+        const val = values[idx];
+        const color = r[`__fmt_chart_${safe}_color`];
+        const hl = r[`__fmt_chart_${safe}_highlight`];
+        return buildPoint(val, color, hl);
+      });
+    }
+    return option;
   }
 
   function buildScatterOption(scatterType) {
@@ -710,7 +791,16 @@ async function renderChart(container, vizSpec, rows, id) {
     const data = rows.map((r) => {
       const x = getField(r, xKey);
       const y = getField(r, yKey);
-      return [toNumber(x, x), toNumber(y, y)];
+      const point = [toNumber(x, x), toNumber(y, y)];
+      const fmt = vizSpec.format || {};
+      const fmtForTarget = fmt[yKey];
+      if (fmtForTarget) {
+        const safe = sanitizeName(yKey);
+        const color = r[`__fmt_chart_${safe}_color`];
+        const hl = r[`__fmt_chart_${safe}_highlight`];
+        return buildPoint(point, color, hl, point);
+      }
+      return point;
     });
 
     return {
@@ -735,6 +825,22 @@ async function renderChart(container, vizSpec, rows, id) {
       name: getField(r, nameKey),
       value: getField(r, valueKey),
     }));
+    const fmt = vizSpec.format || {};
+    if (fmt && fmt[valueKey]) {
+      const safe = sanitizeName(valueKey);
+      data.forEach((d, idx) => {
+        const row = rows[idx];
+        const color = row[`__fmt_chart_${safe}_color`];
+        const hl = row[`__fmt_chart_${safe}_highlight`];
+        const formatted = buildPoint(d.value, color, hl, d.value);
+        if (formatted && formatted.itemStyle) {
+          d.itemStyle = formatted.itemStyle;
+        }
+        if (formatted && formatted.emphasis) {
+          d.emphasis = formatted.emphasis;
+        }
+      });
+    }
 
     const inner =
       vizSpec.inner_radius ||
@@ -1150,7 +1256,7 @@ async function renderChart(container, vizSpec, rows, id) {
   return chart;
 }
 
-function renderTable(container, rows, id) {
+function renderTable(container, rows, id, formatSpec) {
   console.debug("[ducksite] renderTable: rowCount", rows ? rows.length : 0);
   container.innerHTML = "";
 
@@ -1163,7 +1269,7 @@ function renderTable(container, rows, id) {
     return;
   }
 
-  const cols = Object.keys(rows[0]);
+  const cols = Object.keys(rows[0]).filter((c) => !c.startsWith("__fmt_"));
   const table = document.createElement("table");
   table.className = "ducksite-table";
 
@@ -1183,6 +1289,29 @@ function renderTable(container, rows, id) {
     for (const c of cols) {
       const td = document.createElement("td");
       td.textContent = row[c] != null ? String(row[c]) : "";
+
+      const safe = sanitizeName(c);
+      const bgKey = `__fmt_tbl_${safe}_bg`;
+      const fgKey = `__fmt_tbl_${safe}_fg`;
+      const hlKey = `__fmt_tbl_${safe}_hl`;
+
+      const bgVal = row[bgKey];
+      const fgVal = row[fgKey];
+      const hlVal = row[hlKey];
+
+      if (bgVal !== null && bgVal !== undefined && bgVal !== "") {
+        td.style.backgroundColor = bgVal;
+      }
+      if (fgVal !== null && fgVal !== undefined && fgVal !== "") {
+        td.style.color = fgVal;
+      }
+      if (hlVal) {
+        const flag = String(hlVal).toLowerCase();
+        if (flag !== "false" && flag !== "0") {
+          td.classList.add("ducksite-cell-highlight");
+        }
+      }
+
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
@@ -1233,7 +1362,7 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
   const queryCache = new Map();
   const charts = [];
 
-  async function runQuery(queryId) {
+  async function runQuery(queryId, chartFormatSpec = null, tableFormatSpec = null) {
     // First, expand any `${inputs.*}` placeholders in the query identifier.
     // This lets us treat the ID itself as a simple template, e.g.:
     //
@@ -1249,7 +1378,9 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
 
     // Cache by the fully-resolved ID so changing inputs leads to distinct
     // cache entries when necessary.
-    const cacheKey = effectiveId;
+    const cacheKey = `${effectiveId}::${JSON.stringify(chartFormatSpec || {})}::${JSON.stringify(
+      tableFormatSpec || {},
+    )}`;
     if (queryCache.has(cacheKey)) {
       console.debug("[ducksite] runQuery: cache hit", effectiveId);
       return queryCache.get(cacheKey);
@@ -1275,7 +1406,8 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
     const sqlUrl = `${basePath}${effectiveId}.sql`;
     const rawSql = await loadSqlText(sqlUrl);
     const withParams = substituteParams(rawSql, inputs, params);
-    const finalSql = rewriteParquetPathsHttp(withParams);
+    const formattedSql = buildDerivedSqlWithFormatting(withParams, chartFormatSpec, tableFormatSpec);
+    const finalSql = rewriteParquetPathsHttp(formattedSql);
 
     const rows = await executeQuery(conn, finalSql);
     queryCache.set(cacheKey, rows);
@@ -1286,6 +1418,7 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
   await initInputsUI(inputDefs, inputs, runQuery);
 
   const vizSpecs = pageConfig.visualizations || {};
+  const tableSpecs = pageConfig.tables || {};
   const grids = pageConfig.grids || [];
 
   for (const grid of grids) {
@@ -1303,21 +1436,22 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
             console.warn("[ducksite] renderAll: viz container not found for", cellId);
             continue;
           }
-          const rows = await runQuery(queryId);
+          const rows = await runQuery(queryId, vizSpec.format || null, null);
           const chartInstance = await renderChart(container, vizSpec, rows, cellId);
           if (chartInstance) {
             charts.push(chartInstance);
           }
         } else {
-          const queryId = cellId;
+          const tableSpec = tableSpecs[cellId] || {};
+          const queryId = tableSpec.query || cellId;
           const selector = `.${CLASS.tableContainer}[${DATA.tableId}="${cellId}"]`;
           const container = document.querySelector(selector);
           if (!container) {
             console.warn("[ducksite] renderAll: table container not found for", cellId);
             continue;
           }
-          const rows = await runQuery(queryId);
-          renderTable(container, rows, cellId);
+          const rows = await runQuery(queryId, null, tableSpec.format || null);
+          renderTable(container, rows, cellId, tableSpec.format || null);
         }
       }
     }
@@ -1349,4 +1483,9 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
 
 // Export helpers so the SQL editor can materialise views with the same
 // parameter semantics and httpfs path rewriting.
-export { buildParamsFromInputs, substituteParams, rewriteParquetPathsHttp };
+export {
+  buildParamsFromInputs,
+  substituteParams,
+  rewriteParquetPathsHttp,
+  buildDerivedSqlWithFormatting,
+};
