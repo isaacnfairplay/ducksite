@@ -1,15 +1,15 @@
 from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 import json
 import re
 import duckdb
+import datetime
 
 from .markdown_parser import parse_markdown_page
 from .config import DIR_VAR_PATTERN, ProjectConfig, _substitute_dirs
-from .utils import ensure_dir
+from .utils import ensure_dir, sha256_text
 
 
 @dataclass
@@ -50,9 +50,8 @@ class FormSpec:
 
     def resolve_paths(self, cfg: ProjectConfig) -> "FormSpec":
         """
-        Apply ${DIR_*} substitutions but do *not* join to cfg.root yet.
-        That joining is handled centrally so both stub creation and
-        append logic share the same semantics.
+        Apply ${DIR_*} substitutions to target_csv/image_dir but keep them as
+        logical paths. We only join to cfg.root when we actually touch the FS.
         """
         target = (
             _substitute_dirs(self.target_csv, cfg.dirs)
@@ -80,14 +79,17 @@ class FormSpec:
         )
 
 
-def _absolute_csv_path(cfg: ProjectConfig, target_csv: str) -> Path:
+def _absolute_under_root(cfg: ProjectConfig, logical_path: str | None) -> Path:
     """
-    Resolve a CSV path relative to the project root unless it is already absolute.
+    Resolve a logical (possibly relative) path under cfg.root.
 
-    This is critical when ducksite is installed as a package and invoked
-    from a parent directory; we must not rely on the process CWD.
+    - If logical_path is absolute, return it as-is.
+    - If logical_path is relative, treat it as cfg.root / logical_path.
+    - If logical_path is None/empty, fall back to cfg.root.
     """
-    p = Path(target_csv)
+    if not logical_path:
+        return cfg.root
+    p = Path(logical_path)
     if p.is_absolute():
         return p
     return cfg.root / p
@@ -117,62 +119,51 @@ def evaluate_form_sql(form: FormSpec, inputs: Dict[str, object]) -> List[Dict[st
         con.close()
 
 
-def _build_dummy_inputs_for_form(form: FormSpec) -> Dict[str, object]:
+# --- Schema inference helpers (no DuckDB execution) -------------------------
+
+_ALIAS_RE = re.compile(r"\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.IGNORECASE)
+
+
+def _infer_columns_from_sql(sql: str) -> List[str]:
     """
-    Build a minimal dummy inputs dict for introspecting a form's SQL.
+    Infer output column names from a SELECT ... AS col expression list.
 
-    We intentionally avoid any auth/domain checks here; this is only used
-    at *build time* to discover the output columns of sql_relation_query
-    so we can construct a header-only CSV stub.
+    We keep this intentionally dumb but robust:
+      - Scan for 'AS <identifier>' tokens.
+      - Preserve first-seen order, de-duplicate later occurrences.
+      - If nothing is found, fall back to ['value'].
     """
-    dummy: Dict[str, object] = {}
-
-    for name in form.inputs or []:
-        dummy[name] = f"sample_{name}"
-
-    # Common auth-related fields that may appear in sql_relation_query.
-    dummy.setdefault("_user_email", "ducksite@example.com")
-    dummy.setdefault("_user_id", "ducksite-demo")
-
-    return dummy
-
-
-def _ensure_form_csv_stub(cfg: ProjectConfig, form: FormSpec) -> None:
-    """
-    Ensure the target CSV for a form exists with at least a header row.
-
-    This allows DuckDB EXPLAIN to successfully bind queries that read
-    the CSV (e.g. via read_csv_auto('forms/feedback.csv', ...)) even
-    before any real submissions have occurred.
-    """
-    resolved = form.resolve_paths(cfg)
-    csv_path = _absolute_csv_path(cfg, resolved.target_csv)
-
-    if csv_path.exists():
-        # Real data (or an existing stub) is already present.
-        return
-
-    dummy_inputs = _build_dummy_inputs_for_form(resolved)
-
-    try:
-        rows = evaluate_form_sql(resolved, dummy_inputs)
-        cols = list(rows[0].keys()) if rows else []
-    except Exception as e:
-        # Best-effort: if we can't introspect the SQL, fall back to a single
-        # generic column so DuckDB can still parse the CSV.
-        print(
-            f"[ducksite] WARNING: failed to introspect form '{resolved.id}' "
-            f"sql_relation_query for stub CSV: {e}"
-        )
-        cols = []
-
+    cols: List[str] = []
+    seen: set[str] = set()
+    for name in _ALIAS_RE.findall(sql or ""):
+        if name not in seen:
+            seen.add(name)
+            cols.append(name)
     if not cols:
         cols = ["value"]
+    return cols
 
-    header = ",".join(cols) + "\n"
-    ensure_dir(csv_path.parent)
-    csv_path.write_text(header, encoding="utf-8")
-    print(f"[ducksite] created stub CSV for form '{resolved.id}' at {csv_path}")
+
+def _with_enrichment_columns(cols: List[str]) -> List[str]:
+    """
+    Ensure the submitter/time enrichment columns are present in the schema.
+    """
+    out = list(cols)
+    if "submitted_by" not in out:
+        out.append("submitted_by")
+    if "submitted_at" not in out:
+        out.append("submitted_at")
+    return out
+
+
+def _schema_hash(cols: List[str]) -> str:
+    """
+    Compute a short, stable schema hash from the ordered column list.
+    """
+    return sha256_text("\n".join(cols))[:8]
+
+
+# --- Runtime helpers --------------------------------------------------------
 
 
 def _save_image(image_dir: Path, filename: str, data: bytes) -> Path:
@@ -188,6 +179,17 @@ def append_rows_to_csv(
     max_rows_per_user: Optional[int] = None,
     user_email: Optional[str] = None,
 ) -> None:
+    """
+    Append rows to csv_path, evolving schema as needed, and also write a
+    schema-versioned snapshot:
+
+        <stem>__schema_<hash>.csv
+
+    where <hash> is based on the final ordered column list.
+
+    If multiple schema versions exist for the same base, we emit a warning
+    and an example SQL pattern to inspect / merge them.
+    """
     ensure_dir(csv_path.parent)
     con = duckdb.connect()
     try:
@@ -205,6 +207,7 @@ def append_rows_to_csv(
                 cols_sql = "stub VARCHAR"
             con.execute(f"CREATE OR REPLACE TABLE existing ({cols_sql})")
             existing_cols = sample_cols
+
         new_cols = set(existing_cols)
         for row in rows:
             new_cols.update(row.keys())
@@ -236,7 +239,32 @@ def append_rows_to_csv(
                 values,
             )
 
+        # Canonical CSV (union of all data)
         con.execute(f"COPY existing TO '{csv_path}' (HEADER, DELIMITER ',')")
+
+        # Schema-hash snapshot
+        schema_id = _schema_hash(ordered_cols)
+        stem = csv_path.stem
+        suffix = csv_path.suffix
+        hashed_name = f"{stem}__schema_{schema_id}{suffix}"
+        hashed_path = csv_path.with_name(hashed_name)
+        con.execute(f"COPY existing TO '{hashed_path}' (HEADER, DELIMITER ',')")
+
+        # Warn if multiple schema versions exist
+        pattern = f"{stem}__schema_*.{suffix.lstrip('.')}"
+        variants = sorted(csv_path.parent.glob(pattern))
+        if len(variants) > 1:
+            print(f"[ducksite] WARNING: multiple schema versions detected for {csv_path.name}:")
+            for p in variants:
+                print(f"  - {p.name}")
+            if len(variants) >= 2:
+                a, b = variants[0].name, variants[1].name
+                print("[ducksite] Example SQL to inspect/merge two versions:")
+                print(
+                    f"  SELECT * FROM read_csv_auto('{a}', HEADER=TRUE, ALL_VARCHAR=TRUE)\n"
+                    f"  UNION ALL\n"
+                    f"  SELECT * FROM read_csv_auto('{b}', HEADER=TRUE, ALL_VARCHAR=TRUE);"
+                )
     finally:
         con.close()
 
@@ -247,6 +275,15 @@ def process_form_submission(
     payload: Dict[str, object],
     files: Optional[Dict[str, bytes]] = None,
 ) -> Dict[str, object]:
+    """
+    Process a form submission:
+
+      - Validate auth / domain constraints.
+      - Evaluate form.sql_relation_query.
+      - Enrich with server-side metadata:
+          submitted_by, submitted_at (UTC ISO8601).
+      - Append to CSV (canonical + schema-hash snapshot).
+    """
     inputs = payload.get("inputs") or {}
     user_email = inputs.get("_user_email")
     allowed_domains: List[str] = []
@@ -264,22 +301,33 @@ def process_form_submission(
         domain = str(user_email).split("@")[-1].lower()
         if domain not in allowed_domains:
             raise ValueError("email domain not allowed")
+
     resolved = form.resolve_paths(cfg)
 
+    # Evaluate the user-defined relation.
     rows = evaluate_form_sql(resolved, inputs)
     if not rows:
         raise ValueError("Form query returned no rows")
 
+    # Server-side enrichment: submitter + timestamp.
+    # We overwrite any columns with the same names to ensure these are
+    # trustworthy from the server's perspective.
+    submitter = user_email or ""
+    submitted_at = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    for row in rows:
+        row["submitted_by"] = submitter
+        row["submitted_at"] = submitted_at
+
+    # Optional image handling.
     if resolved.image_field and files and resolved.image_field in files:
         image_bytes = files[resolved.image_field]
         fname = f"{resolved.id}_{len(image_bytes)}.bin"
-        image_dir_path = _absolute_csv_path(cfg, resolved.image_dir) if resolved.image_dir else None
-        img_dir = image_dir_path if image_dir_path is not None else Path(".")
-        image_path = _save_image(img_dir, fname, image_bytes)
+        image_dir = _absolute_under_root(cfg, resolved.image_dir)
+        image_path = _save_image(image_dir, fname, image_bytes)
         for row in rows:
             row[resolved.image_field] = str(image_path)
 
-    csv_path = _absolute_csv_path(cfg, resolved.target_csv)
+    csv_path = _absolute_under_root(cfg, resolved.target_csv)
     append_rows_to_csv(csv_path, rows, resolved.max_rows_per_user, user_email)
     return {"status": "ok", "rows_appended": len(rows)}
 
@@ -294,12 +342,35 @@ def discover_forms(cfg: ProjectConfig) -> Dict[str, FormSpec]:
         for raw in pq.form_defs:
             spec = FormSpec.from_dict(raw)
             forms[spec.id] = spec
-            # Ensure the backing CSV exists (header-only stub) so build-time
-            # DuckDB EXPLAIN calls do not fail on missing files.
-            try:
-                _ensure_form_csv_stub(cfg, spec)
-            except Exception as e:
-                print(
-                    f"[ducksite] WARNING: failed to ensure CSV stub for form '{spec.id}': {e}"
-                )
     return forms
+
+
+def ensure_form_target_csvs(cfg: ProjectConfig) -> None:
+    """
+    Ensure a header-only CSV exists for each form's target_csv so that
+    build-time EXPLAINs over read_csv_auto(...) succeed even before any
+    submissions have been made.
+
+    The schema is:
+
+      - Columns inferred from sql_relation_query (AS aliases)
+      - Plus: submitted_by, submitted_at
+    """
+    forms = discover_forms(cfg)
+    if not forms:
+        return
+
+    for spec in forms.values():
+        resolved = spec.resolve_paths(cfg)
+        csv_path = _absolute_under_root(cfg, resolved.target_csv)
+
+        if csv_path.exists():
+            continue
+
+        cols = _infer_columns_from_sql(resolved.sql_relation_query)
+        cols = _with_enrichment_columns(cols)
+
+        ensure_dir(csv_path.parent)
+        header = ",".join(cols) + "\n"
+        csv_path.write_text(header, encoding="utf-8")
+        print(f"[ducksite] created stub CSV for form '{spec.id}' at {csv_path}")
