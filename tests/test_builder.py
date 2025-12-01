@@ -122,3 +122,32 @@ def test_symlinks_map_upstream_files(tmp_path: Path) -> None:
     assert set(data_map.keys()) == expected_keys
     for value in data_map.values():
         assert value.startswith(str(upstream))
+
+
+def test_serve_project_unknown_form_returns_400(tmp_path):
+    from ducksite.builder import serve_project
+    from ducksite.init_project import init_project
+    import threading
+    import time
+    import http.client
+
+    init_project(tmp_path)
+
+    port = 8099
+    t = threading.Thread(target=serve_project, args=(tmp_path, port, "builtin"), daemon=True)
+    t.start()
+    time.sleep(1.0)
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request(
+        "POST",
+        "/api/forms/submit",
+        body=b'{"form_id": "unknown"}',
+        headers={"Content-Type": "application/json"},
+    )
+    resp = conn.getresponse()
+    body = resp.read().decode("utf-8")
+    conn.close()
+
+    assert resp.status == 400
+    assert "unknown form" in body

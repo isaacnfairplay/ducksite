@@ -46,18 +46,20 @@ def _copy_static_src_assets(site_root: Path) -> None:
     ensure_dir(css_root)
 
     # JS modules
-    for src in static_src_dir.glob("*.js"):
-        with resources.as_file(src) as src_path:
-            dest = js_root / src_path.name
-            shutil.copy2(src_path, dest)
-            print(f"[ducksite] synced JS asset {dest}")
+    for src in static_src_dir.iterdir():
+        if src.name.endswith(".js"):
+            with resources.as_file(src) as src_path:
+                dest = js_root / src_path.name
+                shutil.copy2(src_path, dest)
+                print(f"[ducksite] synced JS asset {dest}")
 
     # CSS files (e.g. ducksite.css, charts.css)
-    for src in static_src_dir.glob("*.css"):
-        with resources.as_file(src) as src_path:
-            dest = css_root / src_path.name
-            shutil.copy2(src_path, dest)
-            print(f"[ducksite] synced CSS asset {dest}")
+    for src in static_src_dir.iterdir():
+        if src.name.endswith(".css"):
+            with resources.as_file(src) as src_path:
+                dest = css_root / src_path.name
+                shutil.copy2(src_path, dest)
+                print(f"[ducksite] synced CSS asset {dest}")
 
 
 def _to_camel(enum_name: str) -> str:

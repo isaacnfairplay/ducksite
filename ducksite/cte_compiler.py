@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Match, Optional, Pattern, Tuple
 from pathlib import Path
 import re
 import json
@@ -93,9 +93,11 @@ def _rewrite_virtual_paths_for_explain(site_root: Path, sql: str) -> str:
     if not data_map:
         return sql
 
-    pattern = re.compile(r"read_parquet\(\s*\[(.*?)\]\s*\)", flags=re.DOTALL | re.IGNORECASE)
+    pattern: Pattern[str] = re.compile(
+        r"read_parquet\(\s*\[(.*?)\]\s*\)", flags=re.DOTALL | re.IGNORECASE
+    )
 
-    def repl(match: re.Match) -> str:
+    def repl(match: Match[str]) -> str:
         inner = match.group(1)
         parts = inner.split(",")
         out_parts: List[str] = []

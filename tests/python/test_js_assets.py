@@ -45,3 +45,19 @@ def test_ensure_js_assets_copies_static(tmp_path):
     expected_css = ["ducksite.css", "charts.css"]
     for name in expected_css:
         assert (css_root / name).exists()
+
+
+def test_ensure_js_assets_does_not_rename_assets(tmp_path: Path) -> None:
+    site_root = tmp_path / "static"
+    js_root = site_root / "js"
+    css_root = site_root / "css"
+    js_root.mkdir(parents=True)
+    css_root.mkdir(parents=True)
+    (js_root / "echarts.min.js").write_text("// stub", encoding="utf-8")
+
+    ensure_js_assets(tmp_path, site_root)
+
+    for name in ["main.js", "page_runtime.js", "render.js"]:
+        assert (js_root / name).is_file()
+    for name in ["ducksite.css", "charts.css"]:
+        assert (css_root / name).is_file()

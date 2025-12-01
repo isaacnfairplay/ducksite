@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
-from typing import Dict, List
+from typing import Any, Dict, IO, List, cast
 
 import duckdb
 import http.server
@@ -388,9 +388,10 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
 
             return super().translate_path(path)
 
-        def do_POST(self):
+        def do_POST(self) -> None:
             if self.path != "/api/forms/submit":
-                return super().do_POST()
+                super().do_POST()  # type: ignore[misc]
+                return
 
             ctype = self.headers.get("Content-Type", "")
             payload: Dict[str, object] = {}
@@ -400,7 +401,11 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                     "REQUEST_METHOD": "POST",
                     "CONTENT_TYPE": ctype,
                 }
-                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+                form = cgi.FieldStorage(
+                    fp=cast(IO[bytes], self.rfile),
+                    headers=self.headers,
+                    environ=environ,
+                )
                 for key in form.keys():
                     field = form[key]
                     if getattr(field, "filename", None):
@@ -418,8 +423,8 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 except json.JSONDecodeError:
                     payload = {}
 
-            form_id = payload.get("form_id")
-            if not form_id or form_id not in forms_map:
+            form_id_obj = payload.get("form_id")
+            if not isinstance(form_id_obj, str) or form_id_obj not in forms_map:
                 msg = json.dumps({"error": "unknown form"}).encode("utf-8")
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")
@@ -427,6 +432,8 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 self.end_headers()
                 self.wfile.write(msg)
                 return
+
+            form_id = form_id_obj
 
             try:
                 result = process_form_submission(cfg, forms_map[form_id], payload, files)
@@ -447,7 +454,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
     class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
         allow_reuse_address = True
 
-    def handler(*args, **kwargs):
+    def handler(*args: Any, **kwargs: Any) -> DucksiteRequestHandler:
         return DucksiteRequestHandler(*args, directory=directory, **kwargs)
 
     with ThreadingHTTPServer(("0.0.0.0", port), handler) as httpd:

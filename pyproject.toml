@@ -25,3 +25,10 @@ exclude = ["demo"]
 
 [tool.setuptools.package-data]
 ducksite = ["static_src/*.js", "static_src/*.css"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
