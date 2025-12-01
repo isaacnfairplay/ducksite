@@ -12,6 +12,7 @@ from .html_kit import HtmlTag, HtmlAttr, open_tag, close_tag, element
 
 SQL_BLOCK_RE = re.compile(r"```sql\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 ECHART_BLOCK_RE = re.compile(r"```echart\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
+TABLE_BLOCK_RE = re.compile(r"```table\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 GRID_BLOCK_RE = re.compile(r"```grid(.*?)\n(.*?)```", re.DOTALL)
 INPUT_BLOCK_RE = re.compile(r"```input\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 FORM_BLOCK_RE = re.compile(r"```form\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
@@ -21,6 +22,7 @@ FORM_BLOCK_RE = re.compile(r"```form\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 class PageQueries:
     sql_blocks: Dict[str, str] = field(default_factory=dict)
     echart_blocks: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    table_blocks: Dict[str, Dict[str, str]] = field(default_factory=dict)
     grid_specs: List[Dict] = field(default_factory=list)
     input_defs: Dict[str, Dict[str, str]] = field(default_factory=dict)
     form_defs: List[Dict[str, object]] = field(default_factory=list)
@@ -47,6 +49,69 @@ def _parse_key_values(body: str) -> Dict[str, str]:
             continue
         k, v = line.split(":", 1)
         result[k.strip()] = v.strip().strip('"').strip("'")
+    return result
+
+
+def _parse_block_with_format(body: str) -> Dict[str, object]:
+    lines = body.splitlines()
+    result: Dict[str, object] = {}
+
+    def parse_format(start_idx: int):
+        fmt: Dict[str, Dict[str, str]] = {}
+        i = start_idx
+        while i < len(lines):
+            line = lines[i]
+            if not line.strip():
+                i += 1
+                continue
+            indent = len(line) - len(line.lstrip())
+            if indent == 0:
+                break
+            stripped = line.strip()
+            if ":" not in stripped:
+                i += 1
+                continue
+            target, _ = stripped.split(":", 1)
+            target = target.strip()
+            fmt[target] = {}
+            i += 1
+            while i < len(lines):
+                inner = lines[i]
+                if not inner.strip():
+                    i += 1
+                    continue
+                inner_indent = len(inner) - len(inner.lstrip())
+                if inner_indent <= indent:
+                    break
+                inner_stripped = inner.strip()
+                if ":" in inner_stripped:
+                    k, v = inner_stripped.split(":", 1)
+                    fmt[target][k.strip()] = v.strip().strip('"').strip("'")
+                i += 1
+        return fmt, i
+
+    i = 0
+    while i < len(lines):
+        raw = lines[i]
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            i += 1
+            continue
+        if ":" not in raw:
+            i += 1
+            continue
+
+        key, rest = raw.split(":", 1)
+        key = key.strip()
+        if key == "format":
+            fmt, new_idx = parse_format(i + 1)
+            result[key] = fmt
+            i = new_idx
+            continue
+
+        result[key] = rest.strip().strip('"').strip("'")
+        i += 1
+
     return result
 
 
@@ -146,8 +211,13 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
 
     for m in ECHART_BLOCK_RE.finditer(text):
         viz_id = m.group(1)
-        kv = _parse_key_values(m.group(2))
+        kv = _parse_block_with_format(m.group(2))
         pq.echart_blocks[viz_id] = kv
+
+    for m in TABLE_BLOCK_RE.finditer(text):
+        table_id = m.group(1)
+        kv = _parse_block_with_format(m.group(2))
+        pq.table_blocks[table_id] = kv
 
     for m in INPUT_BLOCK_RE.finditer(text):
         inp_name = m.group(1)
@@ -167,6 +237,7 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
     # 2) Strip those blocks out, leaving the "normal" markdown sections
     stripped = SQL_BLOCK_RE.sub("", text)
     stripped = ECHART_BLOCK_RE.sub("", stripped)
+    stripped = TABLE_BLOCK_RE.sub("", stripped)
     stripped = INPUT_BLOCK_RE.sub("", stripped)
     stripped = GRID_BLOCK_RE.sub("", stripped)
     stripped = FORM_BLOCK_RE.sub("", stripped)
@@ -257,13 +328,24 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
 
 
 def build_page_config(pq: PageQueries) -> str:
+    visualizations = pq.echart_blocks
+    tables: Dict[str, Dict[str, object]] = {}
+
+    for tid, spec in pq.table_blocks.items():
+        tables[tid] = {"query": spec.get("query") or tid}
+        if "format" in spec:
+            tables[tid]["format"] = spec["format"]
+
     config = {
         "queries": {qid: {"sql_id": qid} for qid in pq.sql_blocks.keys()},
-        "visualizations": pq.echart_blocks,
+        "visualizations": visualizations,
         "inputs": pq.input_defs,
         "grids": pq.grid_specs,
         "forms": pq.form_defs,
     }
+
+    if tables:
+        config["tables"] = tables
     return json.dumps(config, indent=2)
 
 
