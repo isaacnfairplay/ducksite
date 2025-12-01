@@ -5,6 +5,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+import pytest
+
 from ducksite.markdown_parser import parse_markdown_page, build_page_config
 from ducksite.forms import FormSpec, substitute_inputs, evaluate_form_sql, append_rows_to_csv, process_form_submission
 from ducksite.config import ProjectConfig
@@ -67,3 +69,37 @@ def test_process_form_submission(tmp_path):
     assert result["rows_appended"] == 1
     text = (tmp_path / "t.csv").read_text()
     assert "u@example.com" in text
+
+
+def test_process_form_submission_requires_auth_email(tmp_path):
+    cfg = make_cfg(tmp_path)
+    form = FormSpec(
+        id="demo",
+        label="Demo",
+        target_csv=str(tmp_path / "t.csv"),
+        inputs=["v"],
+        sql_relation_query="select ${inputs.v} as v",
+        auth_required=True,
+    )
+
+    with pytest.raises(ValueError):
+        process_form_submission(cfg, form, {"inputs": {"v": "abc"}})
+
+
+def test_process_form_submission_rejects_disallowed_domain(tmp_path):
+    cfg = make_cfg(tmp_path)
+    form = FormSpec(
+        id="demo",
+        label="Demo",
+        target_csv=str(tmp_path / "t.csv"),
+        inputs=["v"],
+        sql_relation_query="select ${inputs.v} as v",
+        allowed_email_domains="example.com",
+    )
+
+    with pytest.raises(ValueError):
+        process_form_submission(
+            cfg,
+            form,
+            {"inputs": {"v": "abc", "_user_email": "user@other.net"}},
+        )

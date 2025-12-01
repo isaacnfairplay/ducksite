@@ -173,6 +173,21 @@ def process_form_submission(
 ) -> Dict[str, object]:
     inputs = payload.get("inputs") or {}
     user_email = inputs.get("_user_email")
+    allowed_domains: List[str] = []
+    if form.allowed_email_domains:
+        parts = re.split(r"[,\s]+", str(form.allowed_email_domains))
+        allowed_domains = [p.lstrip("@").lower() for p in parts if p.strip()]
+
+    if form.auth_required and not user_email:
+        raise ValueError("authentication required")
+    if form.max_rows_per_user and not user_email:
+        raise ValueError("user email required")
+    if allowed_domains:
+        if not user_email:
+            raise ValueError("user email required")
+        domain = str(user_email).split("@")[-1].lower()
+        if domain not in allowed_domains:
+            raise ValueError("email domain not allowed")
     resolved = form.resolve_paths(cfg)
 
     rows = evaluate_form_sql(resolved, inputs)
