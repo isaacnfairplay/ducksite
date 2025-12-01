@@ -32,6 +32,7 @@ from .queries import NamedQuery, build_file_source_queries, load_model_queries
 from .symlinks import build_symlinks
 from .utils import ensure_dir
 from .forms import discover_forms, process_form_submission, ensure_form_target_csvs
+from .auth import update_password
 
 
 class CssAsset(StrEnum):
@@ -389,10 +390,15 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
             return super().translate_path(path)
 
         def do_POST(self) -> None:
-            if self.path != "/api/forms/submit":
-                super().do_POST()  # type: ignore[misc]
+            if self.path == "/api/forms/submit":
+                self._handle_form_submit()
                 return
+            if self.path == "/api/auth/update_password":
+                self._handle_update_password()
+                return
+            super().do_POST()  # type: ignore[misc]
 
+        def _handle_form_submit(self) -> None:
             ctype = self.headers.get("Content-Type", "")
             payload: Dict[str, object] = {}
             files: Dict[str, bytes] = {}
@@ -444,6 +450,45 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 self.end_headers()
                 self.wfile.write(body)
             except Exception as e:
+                msg = json.dumps({"error": str(e)}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(msg)))
+                self.end_headers()
+                self.wfile.write(msg)
+
+        def _handle_update_password(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except json.JSONDecodeError:
+                payload = {}
+
+            email = payload.get("email")
+            old_password_raw = payload.get("old_password")
+            new_password_raw = payload.get("new_password")
+            old_password = str(old_password_raw) if old_password_raw is not None else ""
+            new_password = str(new_password_raw) if new_password_raw is not None else ""
+
+            if not isinstance(email, str):
+                msg = json.dumps({"error": "email required"}).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(msg)))
+                self.end_headers()
+                self.wfile.write(msg)
+                return
+
+            try:
+                update_password(cfg, email, old_password, new_password)
+                body = json.dumps({"status": "ok"}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except ValueError as e:
                 msg = json.dumps({"error": str(e)}).encode("utf-8")
                 self.send_response(400)
                 self.send_header("Content-Type", "application/json")

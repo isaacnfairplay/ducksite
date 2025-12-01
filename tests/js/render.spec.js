@@ -1,11 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { writeFile, rm } from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const contractPath = path.resolve(__dirname, '../../ducksite/static_src/ducksite_contract.js');
 
 let buildParamsFromInputs;
 let substituteParams;
@@ -13,12 +7,6 @@ let rewriteParquetPathsHttp;
 let normalizeQueryId;
 
 beforeAll(async () => {
-  await writeFile(contractPath, `export const CLASS = { vizContainer: 'viz', tableContainer: 'table' };
-export const DATA = { vizId: 'data-viz', tableId: 'data-table' };
-export const PATH = { sqlRoot: '/sql' };
-export const ID = { pageConfigJson: 'page-config-json' };
-`, 'utf-8');
-
   const mod = await import('../../ducksite/static_src/render.js');
   ({
     buildParamsFromInputs,
@@ -26,10 +14,6 @@ export const ID = { pageConfigJson: 'page-config-json' };
     rewriteParquetPathsHttp,
     normalizeQueryId,
   } = mod);
-});
-
-afterAll(async () => {
-  await rm(contractPath, { force: true });
 });
 
 const { window } = new JSDOM('', { url: 'https://example.com/reports/index.html' });

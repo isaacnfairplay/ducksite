@@ -5,6 +5,7 @@ from typing import Any, Dict, TYPE_CHECKING
 
 from .config import ProjectConfig
 from .forms import discover_forms, process_form_submission
+from .auth import update_password
 
 if TYPE_CHECKING:
     from fastapi import FastAPI, Request  # type: ignore[import-not-found]
@@ -56,6 +57,25 @@ def create_app(cfg: ProjectConfig) -> Any:
         if not isinstance(form_id, str) or form_id not in forms:
             return {"error": "unknown form"}
         return process_form_submission(cfg, forms[form_id], payload, files or None)
+
+    @app.post("/api/auth/update_password")  # type: ignore[misc]
+    async def update_password_endpoint(request: "Request") -> Dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        email = payload.get("email")
+        old_password_raw = payload.get("old_password")
+        new_password_raw = payload.get("new_password")
+        old_password = str(old_password_raw) if old_password_raw is not None else ""
+        new_password = str(new_password_raw) if new_password_raw is not None else ""
+        if not isinstance(email, str):
+            return {"error": "email required"}
+        try:
+            update_password(cfg, email, old_password, new_password)
+            return {"status": "ok"}
+        except ValueError as e:
+            return {"error": str(e)}
 
     # Serve everything under /, with index.html resolution.
     app.mount(
