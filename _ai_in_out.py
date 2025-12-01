@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 import re
 import fnmatch
 import sys
+import subprocess
 
 # ============================
 # LANGUAGE / EXTENSION CONTRACTS
@@ -16,7 +17,7 @@ LANG_BY_EXT: Dict[str, set[str]] = {
     "html": {"html"},
     "toml": {"toml"},
     "sql": {"sql"},
-    "txt": {"text"}
+    "txt": {"text"},
 }
 
 EXT_WHITELIST = set(LANG_BY_EXT.keys()) | {"md"}
@@ -115,9 +116,11 @@ def is_ignored(path: Path, patterns: List[str], root: Path) -> bool:
     """
     try:
         rel = str(path.relative_to(root)).replace("\\", "/")
-    except Exception as e:
+    except Exception as e:  # pragma: no cover - debugging path issues
         input(str(e))
         rel = str(path)
+    if '_ai_in_out.py' in rel or '.git' in rel:
+        return True
 
     for patt in patterns:
         # Folder ignore: "foo/" -> ignore foo/... and foo itself
@@ -229,7 +232,9 @@ def validate_lang(ext: str, lang: str | None) -> bool:
 # ============================
 # FENCED CODE PARSING (NESTED BACKTICKS SAFE)
 # ============================
-FENCE_OPEN_RE = re.compile(r"^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})(?P<info>[^\n`]*)$")
+FENCE_OPEN_RE = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})(?P<info>[^\n`]*)$"
+)
 
 
 def parse_markdown(text: str, root: Path) -> List[Tuple[str, str]]:
@@ -327,6 +332,77 @@ def scaffold_from_markdown(md_path: Path, root: Path) -> None:
 
 
 # ============================
+# MYPY INTEGRATION
+# ============================
+_MYPY_AVAILABLE: bool | None = None
+
+
+def run_mypy_for_file(root: Path, rel: Path) -> str | None:
+    """
+    Run mypy in strict *module* mode for a given Python file.
+
+    - Converts "pkg/sub/file.py" → module "pkg.sub.file"
+    - Executes: python -m mypy --strict -m <module>
+    - Returns the combined stdout/stderr if there are any errors,
+      otherwise returns None.
+
+    If mypy is not available, prints a one-time warning and returns None.
+    """
+    global _MYPY_AVAILABLE
+
+    if rel.suffix.lower() != ".py" or rel.stem == '__init__':
+        return None
+
+    # If we've previously determined that mypy is unavailable, skip quickly.
+    if _MYPY_AVAILABLE is False:
+        return None
+
+    # Derive module name from relative path (module mode assumption).
+    module = rel.with_suffix("").as_posix().replace("/", ".")
+    cmd = [sys.executable, "-m", "mypy", "--strict", "-m", module]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except FileNotFoundError:
+        # mypy is not installed / not on PATH
+        if _MYPY_AVAILABLE is not False:
+            print("[scaffold] mypy not found; skipping type checks.")
+        _MYPY_AVAILABLE = False
+        return None
+
+    _MYPY_AVAILABLE = True
+
+    if proc.returncode == 0:
+        # No errors in strict mode for this module.
+        return None
+
+    stdout = proc.stdout.strip()
+    stderr = proc.stderr.strip()
+    body_parts: List[str] = []
+
+    # Include the exact command for reproducibility.
+    body_parts.append(f"$ {' '.join(cmd)}")
+
+    if stdout:
+        body_parts.append(stdout)
+    if stderr:
+        body_parts.append(stderr)
+
+    if not stdout and not stderr:
+        body_parts.append(
+            f"mypy exited with code {proc.returncode} and produced no output."
+        )
+
+    return "\n\n".join(body_parts)
+
+
+# ============================
 # GENERATE CODEBASE.md AFTER UPDATES
 # ============================
 def generate_codebase_md(root: Path) -> Path:
@@ -346,7 +422,7 @@ def generate_codebase_md(root: Path) -> Path:
 
         if ext not in EXT_WHITELIST:
             continue
-        if f.name in ("codebase.md"):
+        if f.name in ("codebase.md",):
             continue
         if is_ignored(f, patterns, root):
             continue
@@ -357,6 +433,20 @@ def generate_codebase_md(root: Path) -> Path:
         lines.append(f"{TRIPLE_BACKTICK}{ext}")
         lines.append(content)
         lines.append(TRIPLE_BACKTICK)
+
+        # If this is a Python file, and mypy --strict reports any errors,
+        # append a dedicated mypy block immediately after the Python block.
+        if ext == "py":
+            mypy_output = run_mypy_for_file(root, rel)
+            if mypy_output:
+                # Use "mypy" as the language tag so the scaffold parser ignores
+                # this block when writing files (it only recognizes tags from
+                # LANG_BY_EXT). This keeps mypy diagnostics visible to humans
+                # without ever being treated as file contents.
+                lines.append(f"{TRIPLE_BACKTICK}mypy")
+                lines.append(mypy_output)
+                lines.append(TRIPLE_BACKTICK)
+
         lines.append("")  # blank line between entries
 
     # Append the AI response format note so any model seeing codebase.md
