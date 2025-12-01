@@ -108,6 +108,9 @@ describe('layout for pie and sankey charts', () => {
       expect(legendTop).toBe('bottom');
     } else {
       expect(legendTop).not.toEqual(titleTop);
+      if (typeof titleTop === 'number' && typeof legendTop === 'number') {
+        expect(legendTop).toBeGreaterThan(titleTop + 8);
+      }
     }
   });
 
@@ -142,6 +145,9 @@ describe('layout for pie and sankey charts', () => {
     expect(option.title.top).toBeDefined();
     expect(option.legend.top).toBeDefined();
     expect(option.legend.top).not.toEqual(option.title.top);
+    if (typeof option.legend.top === 'number' && typeof option.title.top === 'number') {
+      expect(option.legend.top).toBeGreaterThan(option.title.top + 8);
+    }
   });
 
   it('ensures sankey links are visible on dark theme', async () => {
@@ -175,5 +181,7 @@ describe('layout for pie and sankey charts', () => {
     expect(series.lineStyle.opacity).toBeGreaterThanOrEqual(0.3);
     expect(series.lineStyle.opacity).toBeLessThanOrEqual(1);
     expect(series.lineStyle.color).toBeTruthy();
+    expect(option.title.top).toBeGreaterThanOrEqual(10);
+    expect(series.top === undefined || series.top === null ? 'na' : series.top).not.toBe(0);
   });
 });

@@ -124,12 +124,19 @@ def test_symlinks_map_upstream_files(tmp_path: Path) -> None:
         assert value.startswith(str(upstream))
 
 
-def test_serve_project_unknown_form_returns_400(tmp_path):
+def test_serve_project_unknown_form_returns_400(tmp_path, monkeypatch):
     from ducksite.builder import serve_project
     from ducksite.init_project import init_project
     import threading
     import time
     import http.client
+    from ducksite import js_assets
+
+    def fake_download(url: str, dest: Path) -> None:  # noqa: ARG001
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("// stub echarts", encoding="utf-8")
+
+    monkeypatch.setattr(js_assets, "_download_with_ssl_bypass", fake_download)
 
     init_project(tmp_path)
 
