@@ -976,9 +976,9 @@ async function renderChart(container, vizSpec, rows, id) {
     return applyDarkTheme(option);
   }
 
-  function buildPieOption() {
-    const nameKey = vizSpec.name || vizSpec.category || vizSpec.x || "category";
-    const valueKey = vizSpec.value || vizSpec.y || "value";
+    function buildPieOption() {
+      const nameKey = vizSpec.name || vizSpec.category || vizSpec.x || "category";
+      const valueKey = vizSpec.value || vizSpec.y || "value";
 
     const data = rows.map((r) => ({
       name: getField(r, nameKey),
@@ -1001,25 +1001,35 @@ async function renderChart(container, vizSpec, rows, id) {
       });
     }
 
-    const inner =
-      vizSpec.inner_radius ||
-      vizSpec.innerRadius ||
-      (vizSpec.donut === "true" || vizSpec.ring === "true" ? "40%" : "0%");
-    const outer = vizSpec.outer_radius || vizSpec.outerRadius || "70%";
+      const inner =
+        vizSpec.inner_radius ||
+        vizSpec.innerRadius ||
+        (vizSpec.donut === "true" || vizSpec.ring === "true" ? "40%" : "0%");
+      const outer = vizSpec.outer_radius || vizSpec.outerRadius || "70%";
 
-    return applyDarkTheme({
-      title: vizSpec.title ? { text: vizSpec.title, top: "4%" } : undefined,
-      tooltip: { trigger: "item" },
-      legend: { top: "12%", left: "center" },
-      series: [
-        {
-          type: "pie",
-          radius: [inner, outer],
-          data,
-        },
-      ],
-    });
-  }
+      const titleTop = 10;
+      const legendTop = typeof titleTop === "number" ? titleTop + 26 : "14%";
+
+      return applyDarkTheme({
+        title: vizSpec.title
+          ? {
+              text: vizSpec.title,
+              top: titleTop,
+              left: "center",
+            }
+          : undefined,
+        tooltip: { trigger: "item" },
+        legend: { top: legendTop, left: "center" },
+        series: [
+          {
+            type: "pie",
+            radius: [inner, outer],
+            center: ["50%", "62%"],
+            data,
+          },
+        ],
+      });
+    }
 
   function buildHeatmapOption() {
     const xK = xKey || vizSpec.x_key || vizSpec.xKey || "x";
@@ -1167,22 +1177,29 @@ async function renderChart(container, vizSpec, rows, id) {
       return { source: s, target: t, value: v };
     });
 
-    const nodes = Array.from(nodesSet).map((name) => ({ name }));
+      const nodes = Array.from(nodesSet).map((name) => ({ name }));
 
-    return applyDarkTheme({
-      title: vizSpec.title ? { text: vizSpec.title } : undefined,
-      tooltip: { trigger: "item", triggerOn: "mousemove" },
-      series: [
-        {
-          type: "sankey",
-          data: nodes,
-          links,
-          emphasis: { focus: "adjacency" },
-          lineStyle: { color: "source", opacity: 0.6 },
-          itemStyle: { borderWidth: 1, borderColor: DARK_FG, opacity: 0.9 },
-        },
-      ],
-    });
+      return applyDarkTheme({
+        title: vizSpec.title
+          ? {
+              text: vizSpec.title,
+              top: 14,
+              left: "center",
+            }
+          : undefined,
+        tooltip: { trigger: "item", triggerOn: "mousemove" },
+        series: [
+          {
+            type: "sankey",
+            top: "14%",
+            data: nodes,
+            links,
+            emphasis: { focus: "adjacency" },
+            lineStyle: { color: "source", opacity: 0.7 },
+            itemStyle: { borderWidth: 1, borderColor: DARK_FG, opacity: 0.9 },
+          },
+        ],
+      });
   }
 
   function buildGraphOption() {

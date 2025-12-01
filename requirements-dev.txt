@@ -2,3 +2,5 @@ pytest
 radon
 mypy
 pytz
+opencv-python-headless
+pytesseract
