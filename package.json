@@ -1,0 +1,15 @@
+{
+  "name": "ducksite",
+  "version": "0.1.0",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.43.1",
+    "jsdom": "^24.0.0",
+    "pngjs": "^7.0.0",
+    "vitest": "^1.4.0"
+  },
+  "scripts": {
+    "test:unit": "vitest",
+    "test:e2e": "playwright test"
+  }
+}
