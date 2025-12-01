@@ -4,7 +4,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from ducksite.js_assets import _write_contract_module
+from ducksite.js_assets import _write_contract_module, ensure_js_assets
 from ducksite.markdown_parser import CssClass
 from ducksite.html_kit import HtmlAttr, HtmlId, SitePath
 
@@ -19,3 +19,29 @@ def test_write_contract_module_uses_enums(tmp_path):
     assert f'tableId: "{HtmlAttr.DATA_TABLE_ID.value}"' in text
     assert f'pageConfigJson: "{HtmlId.PAGE_CONFIG_JSON.value}"' in text
     assert f'sqlRoot: "{SitePath.SQL.value}"' in text
+
+
+def test_ensure_js_assets_copies_static(tmp_path):
+    site_root = tmp_path / "static"
+    js_root = site_root / "js"
+    css_root = site_root / "css"
+
+    js_root.mkdir(parents=True)
+    css_root.mkdir(parents=True)
+    (js_root / "echarts.min.js").write_text("// stub", encoding="utf-8")
+
+    ensure_js_assets(tmp_path, site_root)
+
+    expected_js = [
+        "main.js",
+        "page_runtime.js",
+        "render.js",
+        "page_config.js",
+        "inputs.js",
+    ]
+    for name in expected_js:
+        assert (js_root / name).exists()
+
+    expected_css = ["ducksite.css", "charts.css"]
+    for name in expected_css:
+        assert (css_root / name).exists()

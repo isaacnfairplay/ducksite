@@ -22,3 +22,6 @@ package = true
 [tool.setuptools.packages.find]
 include = ["ducksite"]
 exclude = ["demo"]
+
+[tool.setuptools.package-data]
+ducksite = ["static_src/*.js", "static_src/*.css"]
