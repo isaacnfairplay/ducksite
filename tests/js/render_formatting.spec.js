@@ -1,28 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { writeFile, rm } from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const contractPath = path.resolve(
-  __dirname,
-  '../../ducksite/static_src/ducksite_contract.js',
-);
 
 let executeQueryMock;
 let setOptionSpy;
 
 beforeEach(async () => {
   vi.resetModules();
-
-  await writeFile(
-    contractPath,
-    "export const CLASS = { vizContainer: 'viz', tableContainer: 'table' };\n" +
-      "export const DATA = { vizId: 'data-viz', tableId: 'data-table' };\n" +
-      "export const PATH = { sqlRoot: '/sql' };\n",
-    'utf-8',
-  );
 
   const { window } = new JSDOM(
     '<div class="viz" data-viz="chart1"></div>' +
@@ -60,10 +43,6 @@ beforeEach(async () => {
     initDuckDB: vi.fn().mockResolvedValue({ conn: {} }),
     executeQuery: (...args) => executeQueryMock(...args),
   }));
-});
-
-afterEach(async () => {
-  await rm(contractPath, { force: true });
 });
 
 describe('renderAll without formatting', () => {

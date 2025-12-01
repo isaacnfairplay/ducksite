@@ -1,27 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { writeFile, rm } from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const contractPath = path.resolve(__dirname, '../../ducksite/static_src/ducksite_contract.js');
-
-beforeEach(async () => {
-  await writeFile(
-    contractPath,
-    [
-      "export const ID = { pageConfigJson: 'page-config-json' };",
-      "export const CLASS = { vizContainer: 'viz', tableContainer: 'table' };",
-      "export const DATA = { vizId: 'data-viz', tableId: 'data-table' };",
-      "export const PATH = { sqlRoot: '/sql' };",
-    ].join('\n'),
-    'utf-8',
-  );
-});
-
-afterEach(async () => {
-  await rm(contractPath, { force: true });
+beforeEach(() => {
+  vi.restoreAllMocks();
 });
 
 it('keeps form submit buttons when filters render', async () => {

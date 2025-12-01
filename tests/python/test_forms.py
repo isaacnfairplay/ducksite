@@ -112,6 +112,39 @@ def test_process_form_submission_rejects_disallowed_domain(tmp_path):
         )
 
 
+def test_initial_password_set_then_required(tmp_path: Path) -> None:
+    cfg = make_cfg(tmp_path)
+    form = FormSpec(
+        id="demo",
+        label="Demo",
+        target_csv=str(tmp_path / "t.csv"),
+        inputs=["v"],
+        sql_relation_query="select ${inputs.v} as v, ${inputs._user_email} as submitted_by",
+        auth_required=True,
+    )
+
+    result = process_form_submission(
+        cfg,
+        form,
+        {"inputs": {"v": "abc", "_user_email": "u@example.com", "_user_password": "secret123"}},
+    )
+    assert result["rows_appended"] == 1
+
+    with pytest.raises(ValueError):
+        process_form_submission(
+            cfg,
+            form,
+            {"inputs": {"v": "def", "_user_email": "u@example.com", "_user_password": "wrong"}},
+        )
+
+    result2 = process_form_submission(
+        cfg,
+        form,
+        {"inputs": {"v": "def", "_user_email": "u@example.com", "_user_password": "secret123"}},
+    )
+    assert result2["rows_appended"] == 1
+
+
 def test_formspec_from_dict_and_stub_csv(tmp_path: Path) -> None:
     cfg = ProjectConfig(root=tmp_path, dirs={"DIR_FORMS": "static/forms"})
     content_dir = cfg.root / "content"

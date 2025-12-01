@@ -7,6 +7,7 @@ import re
 import duckdb
 import datetime
 
+from .auth import ensure_initial_password
 from .markdown_parser import parse_markdown_page
 from .config import DIR_VAR_PATTERN, ProjectConfig, _substitute_dirs
 from .utils import ensure_dir, sha256_text
@@ -315,6 +316,9 @@ def process_form_submission(
         inputs = {}
     user_email_val = inputs.get("_user_email")
     user_email = str(user_email_val) if user_email_val is not None else None
+    password_val = inputs.get("_user_password")
+    password = str(password_val) if password_val is not None else ""
+    auth_status: Optional[str] = None
     allowed_domains: List[str] = []
     if form.allowed_email_domains:
         parts = re.split(r"[,\s]+", str(form.allowed_email_domains))
@@ -330,6 +334,8 @@ def process_form_submission(
         domain = str(user_email).split("@")[-1].lower()
         if domain not in allowed_domains:
             raise ValueError("email domain not allowed")
+    if form.auth_required and user_email:
+        auth_status = ensure_initial_password(cfg, user_email, password)
 
     resolved = form.resolve_paths(cfg)
 
@@ -358,7 +364,10 @@ def process_form_submission(
 
     csv_path = _absolute_under_root(cfg, resolved.target_csv)
     append_rows_to_csv(csv_path, rows, resolved.max_rows_per_user, user_email)
-    return {"status": "ok", "rows_appended": len(rows)}
+    result: Dict[str, object] = {"status": "ok", "rows_appended": len(rows)}
+    if auth_status is not None:
+        result["auth_status"] = auth_status
+    return result
 
 
 def discover_forms(cfg: ProjectConfig) -> Dict[str, FormSpec]:
