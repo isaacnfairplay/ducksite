@@ -14,6 +14,7 @@ SQL_BLOCK_RE = re.compile(r"```sql\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 ECHART_BLOCK_RE = re.compile(r"```echart\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 GRID_BLOCK_RE = re.compile(r"```grid(.*?)\n(.*?)```", re.DOTALL)
 INPUT_BLOCK_RE = re.compile(r"```input\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
+FORM_BLOCK_RE = re.compile(r"```form\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 
 
 @dataclass
@@ -22,6 +23,7 @@ class PageQueries:
     echart_blocks: Dict[str, Dict[str, str]] = field(default_factory=dict)
     grid_specs: List[Dict] = field(default_factory=list)
     input_defs: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    form_defs: List[Dict[str, object]] = field(default_factory=list)
     html: str = ""
     page_rel: Path = Path("")
 
@@ -79,6 +81,54 @@ def _parse_grid_block(args: str, body: str) -> Dict:
     return {"cols": cols, "gap": gap, "rows": rows_spec}
 
 
+def _parse_form_block(form_id: str, body: str) -> Dict[str, object]:
+    """
+    Minimal parser for ```form``` blocks.
+
+    The body is line-oriented; key/value pairs are read until a
+    `sql_relation_query:` line is seen, after which the remaining lines are
+    captured verbatim. This keeps the implementation intentionally simple
+    while supporting the documented fenced-block shape.
+    """
+
+    lines = body.splitlines()
+    attrs: Dict[str, object] = {"id": form_id}
+    sql_lines: List[str] = []
+    in_sql = False
+
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if not in_sql:
+            if line.strip().startswith("sql_relation_query"):
+                # Grab anything after the colon on this line as part of the SQL body.
+                _, _, after = line.partition(":")
+                if after.strip():
+                    sql_lines.append(after.strip())
+                in_sql = True
+                continue
+
+            if not line.strip() or line.strip().startswith("#"):
+                continue
+            if ":" not in line:
+                continue
+            key, val = line.split(":", 1)
+            cleaned = val.strip().strip('"').strip("'")
+            if key.strip() == "inputs":
+                try:
+                    attrs[key.strip()] = json.loads(cleaned)
+                except Exception:
+                    attrs[key.strip()] = cleaned
+            else:
+                attrs[key.strip()] = cleaned
+        else:
+            sql_lines.append(line)
+
+    if sql_lines:
+        attrs["sql_relation_query"] = "\n".join(sql_lines).strip()
+
+    return attrs
+
+
 def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
     text = path.read_text(encoding="utf-8")
     pq = PageQueries(page_rel=rel_path)
@@ -97,6 +147,11 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
         kv = _parse_key_values(m.group(2))
         pq.input_defs[inp_name] = kv
 
+    for m in FORM_BLOCK_RE.finditer(text):
+        form_id = m.group(1)
+        body = m.group(2)
+        pq.form_defs.append(_parse_form_block(form_id, body))
+
     for m in GRID_BLOCK_RE.finditer(text):
         args = m.group(1)
         body = m.group(2)
@@ -107,6 +162,7 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
     stripped = ECHART_BLOCK_RE.sub("", stripped)
     stripped = INPUT_BLOCK_RE.sub("", stripped)
     stripped = GRID_BLOCK_RE.sub("", stripped)
+    stripped = FORM_BLOCK_RE.sub("", stripped)
     stripped_content = stripped.strip()
 
     html_parts: List[str] = []
@@ -199,6 +255,7 @@ def build_page_config(pq: PageQueries) -> str:
         "visualizations": pq.echart_blocks,
         "inputs": pq.input_defs,
         "grids": pq.grid_specs,
+        "forms": pq.form_defs,
     }
     return json.dumps(config, indent=2)
 

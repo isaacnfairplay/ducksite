@@ -3,6 +3,7 @@ from pathlib import Path
 import textwrap
 
 from .demo_init_common import write_if_missing
+from .utils import ensure_dir
 
 
 def _init_root_page(root: Path) -> None:
@@ -26,6 +27,7 @@ def _init_root_page(root: Path) -> None:
             - [Models demo](/models/index.html)
             - [Template models demo](/template/index.html)
             - [Chart gallery](/gallery/index.html)
+            - [Forms demo](/forms/index.html)
 
             ```sql demo_summary
             SELECT
@@ -482,6 +484,84 @@ def _init_template_page(root: Path) -> None:
         + "\n"
     )
     write_if_missing(tmpl_md, content)
+
+
+def _init_forms_page(root: Path) -> None:
+    """Create a forms demo that appends to a CSV and reads it back."""
+
+    csv_path = root / "static" / "forms" / "feedback.csv"
+    if not csv_path.exists():
+        ensure_dir(csv_path.parent)
+        csv_path.write_text(
+            """category,comment,severity,submitted_by,submitted_at
+General,"Existing demo feedback","3","demo@example.com","2024-01-01T00:00:00Z"
+""",
+            encoding="utf-8",
+        )
+        print(f"[ducksite:init] wrote {csv_path}")
+
+    forms_md = root / "content" / "forms" / "index.md"
+    content = (
+        textwrap.dedent(
+            """
+            # Forms Demo
+
+            This page reuses Ducksite inputs to collect new rows into a CSV.
+
+            ```input feedback_category
+            label: Feedback category
+            visual_mode: dropdown
+            options_query: feedback_categories
+            default: "General"
+            ```
+
+            ```input feedback_text
+            label: Feedback comment
+            visual_mode: text
+            placeholder: "Share a quick note"
+            ```
+
+            ```input feedback_severity
+            label: Severity (1-5)
+            visual_mode: text
+            placeholder: "3"
+            ```
+
+            ```sql feedback_categories
+            SELECT 'General' AS value, 'General' AS label
+            UNION ALL SELECT 'Bug', 'Bug'
+            UNION ALL SELECT 'Idea', 'Idea';
+            ```
+
+            ```form feedback_form
+            label: "Submit feedback"
+            target_csv: "${DIR_FORMS}/feedback.csv"
+            auth_required: true
+            inputs: ["feedback_category", "feedback_text", "feedback_severity"]
+            max_rows_per_user: 10
+            sql_relation_query: |
+              SELECT
+                ${inputs.feedback_category} AS category,
+                ${inputs.feedback_text} AS comment,
+                ${inputs.feedback_severity} AS severity,
+                ${inputs._user_email} AS submitted_by,
+                now() AS submitted_at
+            ```
+
+            ```sql feedback_rows
+            SELECT *
+            FROM read_csv_auto('forms/feedback.csv', HEADER=TRUE, ALL_VARCHAR=TRUE)
+            ORDER BY submitted_at DESC;
+            ```
+
+            ```grid cols=12 gap=md
+            | feedback_rows:12 |
+            ```
+            """
+        ).strip()
+        + "\n"
+    )
+    write_if_missing(forms_md, content)
 
 
 def _init_gallery_page(root: Path) -> None:
@@ -1293,4 +1373,5 @@ def init_demo_content(root: Path) -> None:
     _init_derived_filters_page(root)
     _init_models_page(root)
     _init_template_page(root)
+    _init_forms_page(root)
     _init_gallery_page(root)

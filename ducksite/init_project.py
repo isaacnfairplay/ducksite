@@ -18,6 +18,7 @@ def init_project(root: Path) -> None:
       - content/minor/index.md
       - content/filters/index.md
       - content/cross_filters/index.md
+      - content/forms/index.md
       - content/models/index.md
       - content/template/index.md
       - sources_sql/demo_models.sql
