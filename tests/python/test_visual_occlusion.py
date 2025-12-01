@@ -26,7 +26,81 @@ from ducksite.init_project import init_project
 def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_download(url: str, dest: Path) -> None:  # noqa: ARG001
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("// stub echarts", encoding="utf-8")
+        dest.write_text(
+            """
+(function () {
+  function clear(el) {
+    while (el.firstChild) {
+      el.removeChild(el.firstChild);
+    }
+  }
+
+  function renderTitle(root, option) {
+    const title = option && option.title;
+    const text = title && (title.text || title);
+    if (!text) return;
+
+    const h = document.createElement("div");
+    h.className = "echarts-title";
+    h.style.fontSize = "16px";
+    h.style.fontWeight = "600";
+    h.textContent = String(text);
+    root.appendChild(h);
+  }
+
+  function renderLegend(root, option) {
+    const legend = option && option.legend;
+    if (!legend) return;
+    const data = Array.isArray(legend.data)
+      ? legend.data
+      : legend === true
+        ? []
+        : legend && legend.data
+          ? legend.data
+          : [];
+    if (!data || data.length === 0) return;
+
+    const ul = document.createElement("ul");
+    ul.className = "echarts-legend";
+    ul.style.listStyle = "none";
+    ul.style.display = "flex";
+    ul.style.flexWrap = "wrap";
+    ul.style.gap = "8px";
+
+    for (const item of data) {
+      const li = document.createElement("li");
+      li.textContent = typeof item === "string" ? item : String(item?.name ?? item);
+      ul.appendChild(li);
+    }
+
+    root.appendChild(ul);
+  }
+
+  const echarts = {
+    init(el) {
+      const root = el;
+
+      return {
+        setOption(option) {
+          clear(root);
+          renderTitle(root, option || {});
+          renderLegend(root, option || {});
+          const marker = document.createElement("div");
+          marker.className = "echarts-stub";
+          marker.textContent = "mock chart";
+          root.appendChild(marker);
+        },
+        resize() {},
+        dispose() {},
+      };
+    },
+  };
+
+  window.echarts = echarts;
+})();
+            """,
+            encoding="utf-8",
+        )
 
     monkeypatch.setattr(js_assets, "_download_with_ssl_bypass", fake_download)
 
