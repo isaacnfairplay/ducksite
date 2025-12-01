@@ -10,15 +10,22 @@ const contractPath = path.resolve(__dirname, '../../ducksite/static_src/ducksite
 let buildParamsFromInputs;
 let substituteParams;
 let rewriteParquetPathsHttp;
+let normalizeQueryId;
 
 beforeAll(async () => {
   await writeFile(contractPath, `export const CLASS = { vizContainer: 'viz', tableContainer: 'table' };
 export const DATA = { vizId: 'data-viz', tableId: 'data-table' };
 export const PATH = { sqlRoot: '/sql' };
+export const ID = { pageConfigJson: 'page-config-json' };
 `, 'utf-8');
 
   const mod = await import('../../ducksite/static_src/render.js');
-  ({ buildParamsFromInputs, substituteParams, rewriteParquetPathsHttp } = mod);
+  ({
+    buildParamsFromInputs,
+    substituteParams,
+    rewriteParquetPathsHttp,
+    normalizeQueryId,
+  } = mod);
 });
 
 afterAll(async () => {
@@ -88,5 +95,49 @@ describe('rewriteParquetPathsHttp', () => {
     expect(out).toContain("'https://host/x.parquet'");
     expect(out).toContain("'/root/a.parquet'");
     expect(out).toContain("'//cdn/b.parquet'");
+  });
+
+  it('rewrites read_csv_auto relative paths to absolute HTTP URLs', () => {
+    const sql = "select * from read_csv_auto('forms/feedback.csv', HEADER=TRUE)";
+    const out = rewriteParquetPathsHttp(sql);
+    expect(out).toContain(
+      "read_csv_auto('https://example.com/forms/feedback.csv', HEADER=TRUE",
+    );
+  });
+
+  it('does not change absolute or root CSV paths in read_csv_auto', () => {
+    const sql =
+      "select * from read_csv_auto('https://host/x.csv')" +
+      " union all select * from read_csv_auto('/root/a.csv')" +
+      " union all select * from read_csv_auto('//cdn/b.csv')";
+    const out = rewriteParquetPathsHttp(sql);
+    expect(out).toContain("read_csv_auto('https://host/x.csv'");
+    expect(out).toContain("read_csv_auto('/root/a.csv'");
+    expect(out).toContain("read_csv_auto('//cdn/b.csv'");
+  });
+});
+
+describe('normalizeQueryId', () => {
+  it('falls back demo_ to demo for global barcode demo when prefix empty', async () => {
+    const { id, valid, basePath } = normalizeQueryId(
+      'global:demo_${inputs.barcode_prefix}',
+      {},
+    );
+    expect(valid).toBe(true);
+    expect(id).toBe('demo');
+    expect(basePath).toBe('/sql/_global/');
+  });
+
+  it('marks invalid ids like ".." as invalid', async () => {
+    const { valid, id } = normalizeQueryId('..', {});
+    expect(valid).toBe(false);
+    expect(id).toBe('..');
+  });
+
+  it('passes through normal ids unchanged', async () => {
+    const { valid, id, basePath } = normalizeQueryId('gallery_q1_totals', {});
+    expect(valid).toBe(true);
+    expect(id).toBe('gallery_q1_totals');
+    expect(basePath).toBe('/sql/reports/');
   });
 });
