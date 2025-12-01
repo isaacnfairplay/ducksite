@@ -49,6 +49,11 @@ class FormSpec:
         )
 
     def resolve_paths(self, cfg: ProjectConfig) -> "FormSpec":
+        """
+        Apply ${DIR_*} substitutions but do *not* join to cfg.root yet.
+        That joining is handled centrally so both stub creation and
+        append logic share the same semantics.
+        """
         target = (
             _substitute_dirs(self.target_csv, cfg.dirs)
             if DIR_VAR_PATTERN.search(self.target_csv)
@@ -73,6 +78,19 @@ class FormSpec:
             allowed_email_domains=self.allowed_email_domains,
             max_rows_per_user=self.max_rows_per_user,
         )
+
+
+def _absolute_csv_path(cfg: ProjectConfig, target_csv: str) -> Path:
+    """
+    Resolve a CSV path relative to the project root unless it is already absolute.
+
+    This is critical when ducksite is installed as a package and invoked
+    from a parent directory; we must not rely on the process CWD.
+    """
+    p = Path(target_csv)
+    if p.is_absolute():
+        return p
+    return cfg.root / p
 
 
 def substitute_inputs(template: str, inputs: Dict[str, object]) -> str:
@@ -128,7 +146,7 @@ def _ensure_form_csv_stub(cfg: ProjectConfig, form: FormSpec) -> None:
     before any real submissions have occurred.
     """
     resolved = form.resolve_paths(cfg)
-    csv_path = Path(resolved.target_csv)
+    csv_path = _absolute_csv_path(cfg, resolved.target_csv)
 
     if csv_path.exists():
         # Real data (or an existing stub) is already present.
@@ -255,13 +273,14 @@ def process_form_submission(
     if resolved.image_field and files and resolved.image_field in files:
         image_bytes = files[resolved.image_field]
         fname = f"{resolved.id}_{len(image_bytes)}.bin"
-        image_path = _save_image(Path(resolved.image_dir), fname, image_bytes)
+        image_dir_path = _absolute_csv_path(cfg, resolved.image_dir) if resolved.image_dir else None
+        img_dir = image_dir_path if image_dir_path is not None else Path(".")
+        image_path = _save_image(img_dir, fname, image_bytes)
         for row in rows:
             row[resolved.image_field] = str(image_path)
 
-    append_rows_to_csv(
-        Path(resolved.target_csv), rows, resolved.max_rows_per_user, user_email
-    )
+    csv_path = _absolute_csv_path(cfg, resolved.target_csv)
+    append_rows_to_csv(csv_path, rows, resolved.max_rows_per_user, user_email)
     return {"status": "ok", "rows_appended": len(rows)}
 
 

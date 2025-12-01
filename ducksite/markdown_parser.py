@@ -87,8 +87,8 @@ def _parse_form_block(form_id: str, body: str) -> Dict[str, object]:
 
     The body is line-oriented; key/value pairs are read until a
     `sql_relation_query:` line is seen, after which the remaining lines are
-    captured verbatim. This keeps the implementation intentionally simple
-    while supporting the documented fenced-block shape.
+    captured verbatim as SQL, with support for the common YAML-style
+    `sql_relation_query: |` prefix used in the demo content.
     """
 
     lines = body.splitlines()
@@ -100,10 +100,16 @@ def _parse_form_block(form_id: str, body: str) -> Dict[str, object]:
         line = raw.rstrip("\n")
         if not in_sql:
             if line.strip().startswith("sql_relation_query"):
-                # Grab anything after the colon on this line as part of the SQL body.
-                _, _, after = line.partition(":")
-                if after.strip():
-                    sql_lines.append(after.strip())
+                # Handle both:
+                #   sql_relation_query: SELECT ...
+                #   sql_relation_query: |
+                key, _, after = line.partition(":")
+                marker = after.strip()
+                if marker and marker != "|":
+                    # Inline SQL on the same line.
+                    sql_lines.append(marker)
+                # If marker == "|" or empty, the actual SQL starts on
+                # subsequent lines.
                 in_sql = True
                 continue
 
@@ -121,6 +127,7 @@ def _parse_form_block(form_id: str, body: str) -> Dict[str, object]:
             else:
                 attrs[key.strip()] = cleaned
         else:
+            # Inside the SQL body, keep lines verbatim.
             sql_lines.append(line)
 
     if sql_lines:
