@@ -1092,7 +1092,8 @@ def _init_gallery_page(root: Path) -> None:
             type: scatter
             x: x
             y: y
-            title: "Scatter: x vs y"
+            title: "Scatter: x vs y (with trendline)"
+            trendline: linear
             ```
 
             ```echart gallery_effect_scatter

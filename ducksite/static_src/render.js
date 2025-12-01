@@ -9,6 +9,81 @@
 import { initDuckDB, executeQuery } from "./duckdb_runtime.js";
 import { CLASS, DATA, PATH } from "./ducksite_contract.js";
 
+const DARK_BG = "#020617";
+const DARK_FG = "#e5e7eb";
+const DARK_MUTED = "#9ca3af";
+const GRID_LINE = "rgba(148, 163, 184, 0.25)";
+
+function applyDarkTheme(option) {
+  const base = {
+    backgroundColor: "transparent",
+    textStyle: { color: DARK_FG },
+    title: option.title || undefined,
+    tooltip: option.tooltip || {},
+    legend: option.legend || undefined,
+  };
+
+  if (option.xAxis) {
+    const xList = Array.isArray(option.xAxis) ? option.xAxis : [option.xAxis];
+    for (const xa of xList) {
+      xa.axisLine = xa.axisLine || {};
+      xa.axisLine.lineStyle = xa.axisLine.lineStyle || {};
+      xa.axisLine.lineStyle.color = xa.axisLine.lineStyle.color || DARK_MUTED;
+
+      xa.axisLabel = xa.axisLabel || {};
+      xa.axisLabel.color = xa.axisLabel.color || DARK_FG;
+
+      xa.splitLine = xa.splitLine || {};
+      xa.splitLine.lineStyle = xa.splitLine.lineStyle || {};
+      xa.splitLine.lineStyle.color = xa.splitLine.lineStyle.color || GRID_LINE;
+    }
+    base.xAxis = xList.length === 1 ? xList[0] : xList;
+  }
+
+  if (option.yAxis) {
+    const yList = Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis];
+    for (const ya of yList) {
+      ya.axisLine = ya.axisLine || {};
+      ya.axisLine.lineStyle = ya.axisLine.lineStyle || {};
+      ya.axisLine.lineStyle.color = ya.axisLine.lineStyle.color || DARK_MUTED;
+
+      ya.axisLabel = ya.axisLabel || {};
+      ya.axisLabel.color = ya.axisLabel.color || DARK_FG;
+
+      ya.splitLine = ya.splitLine || {};
+      ya.splitLine.lineStyle = ya.splitLine.lineStyle || {};
+      ya.splitLine.lineStyle.color = ya.splitLine.lineStyle.color || GRID_LINE;
+    }
+    base.yAxis = yList.length === 1 ? yList[0] : yList;
+  }
+
+  if (option.radar) {
+    const radar = Array.isArray(option.radar) ? option.radar[0] : option.radar;
+    radar.axisName = radar.axisName || {};
+    radar.axisName.color = radar.axisName.color || DARK_FG;
+    radar.splitLine = radar.splitLine || {};
+    radar.splitLine.lineStyle = radar.splitLine.lineStyle || {};
+    radar.splitLine.lineStyle.color = radar.splitLine.lineStyle.color || GRID_LINE;
+    radar.splitArea = radar.splitArea || {};
+    radar.splitArea.areaStyle = radar.splitArea.areaStyle || {};
+    radar.splitArea.areaStyle.color =
+      radar.splitArea.areaStyle.color || ["rgba(15,23,42,0.8)", "rgba(15,23,42,0.4)"];
+    base.radar = radar;
+  }
+
+  if (option.series) {
+    const series = Array.isArray(option.series) ? option.series : [option.series];
+    for (const s of series) {
+      if (!s.label) s.label = {};
+      if (s.label.show == null) s.label.show = true;
+      if (!s.label.color) s.label.color = DARK_FG;
+    }
+    base.series = series;
+  }
+
+  return { ...base, ...option };
+}
+
 /**
  * Compute /sql/... base path for the current page.
  */
@@ -759,7 +834,7 @@ async function renderChart(container, vizSpec, rows, id) {
       }
     }
 
-    chart.setOption(option);
+    chart.setOption(applyDarkTheme(option));
     return chart;
   }
 
@@ -804,7 +879,7 @@ async function renderChart(container, vizSpec, rows, id) {
         return buildPoint(val, color, hl);
       });
     }
-    return option;
+    return applyDarkTheme(option);
   }
 
   function buildScatterOption(scatterType) {
@@ -812,33 +887,93 @@ async function renderChart(container, vizSpec, rows, id) {
       console.warn("[ducksite] Scatter viz missing x or y:", vizSpec);
       return {};
     }
-    const data = rows.map((r) => {
-      const x = getField(r, xKey);
-      const y = getField(r, yKey);
-      const point = [toNumber(x, x), toNumber(y, y)];
-      const fmt = vizSpec.format || {};
-      const fmtForTarget = fmt[yKey];
+
+    const points = rows
+      .map((r) => {
+        const x = toNumber(getField(r, xKey), NaN);
+        const y = toNumber(getField(r, yKey), NaN);
+        return { point: [x, y], row: r };
+      })
+      .filter(({ point: [x, y] }) => Number.isFinite(x) && Number.isFinite(y));
+
+    const fmt = vizSpec.format || {};
+    const fmtForTarget = fmt[yKey];
+
+    const data = points.map(({ point, row }) => {
       if (fmtForTarget) {
         const safe = sanitizeName(yKey);
-        const color = r[`__fmt_chart_${safe}_color`];
-        const hl = r[`__fmt_chart_${safe}_highlight`];
+        const color = row[`__fmt_chart_${safe}_color`];
+        const hl = row[`__fmt_chart_${safe}_highlight`];
         return buildPoint(point, color, hl, point);
       }
       return point;
     });
 
-    return {
+    const series = [
+      {
+        type: scatterType,
+        data,
+      },
+    ];
+
+    if (
+      (vizSpec.trendline === "linear" || vizSpec.trendline === "regression") &&
+      scatterType === "scatter" &&
+      points.length >= 2
+    ) {
+      let sumX = 0,
+        sumY = 0,
+        sumXY = 0,
+        sumX2 = 0;
+      for (const {
+        point: [x, y],
+      } of points) {
+        sumX += x;
+        sumY += y;
+        sumXY += x * y;
+        sumX2 += x * x;
+      }
+      const n = points.length;
+      const denom = n * sumX2 - sumX * sumX;
+      if (denom !== 0) {
+        const slope = (n * sumXY - sumX * sumY) / denom;
+        const intercept = (sumY - slope * sumX) / n;
+
+        let minX = Infinity;
+        let maxX = -Infinity;
+        for (const {
+          point: [x],
+        } of points) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+        }
+
+        const trendPoints = [
+          [minX, slope * minX + intercept],
+          [maxX, slope * maxX + intercept],
+        ];
+
+        series.push({
+          type: "line",
+          name: "trend",
+          data: trendPoints,
+          smooth: false,
+          symbol: "none",
+          lineStyle: { width: 2, type: "dashed" },
+          emphasis: { disabled: true },
+        });
+      }
+    }
+
+    const option = {
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "item" },
       xAxis: { type: "value" },
       yAxis: { type: "value" },
-      series: [
-        {
-          type: scatterType,
-          data,
-        },
-      ],
+      series,
     };
+
+    return applyDarkTheme(option);
   }
 
   function buildPieOption() {
@@ -872,7 +1007,7 @@ async function renderChart(container, vizSpec, rows, id) {
       (vizSpec.donut === "true" || vizSpec.ring === "true" ? "40%" : "0%");
     const outer = vizSpec.outer_radius || vizSpec.outerRadius || "70%";
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "item" },
       legend: { top: "5%", left: "center" },
@@ -883,7 +1018,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data,
         },
       ],
-    };
+    });
   }
 
   function buildHeatmapOption() {
@@ -904,7 +1039,7 @@ async function renderChart(container, vizSpec, rows, id) {
     ]);
     const { min, max } = minMaxFromArray(rawV);
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: {
         position: "top",
@@ -933,7 +1068,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data,
         },
       ],
-    };
+    });
   }
 
   function buildGaugeOption() {
@@ -951,7 +1086,7 @@ async function renderChart(container, vizSpec, rows, id) {
       vizSpec.title ||
       nameKey;
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       series: [
         {
@@ -959,7 +1094,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data: [{ value, name }],
         },
       ],
-    };
+    });
   }
 
   function buildFunnelOption() {
@@ -971,7 +1106,7 @@ async function renderChart(container, vizSpec, rows, id) {
       value: toNumber(getField(r, valueKey), 0),
     }));
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "item" },
       series: [
@@ -980,7 +1115,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data,
         },
       ],
-    };
+    });
   }
 
   function buildPictorialBarOption() {
@@ -992,7 +1127,7 @@ async function renderChart(container, vizSpec, rows, id) {
     const values = rows.map((r) => getField(r, yKey));
     const symbol = vizSpec.symbol || "roundRect";
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "axis" },
       xAxis: {
@@ -1011,7 +1146,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data: values,
         },
       ],
-    };
+    });
   }
 
   function buildSankeyOption() {
@@ -1034,7 +1169,7 @@ async function renderChart(container, vizSpec, rows, id) {
 
     const nodes = Array.from(nodesSet).map((name) => ({ name }));
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "item", triggerOn: "mousemove" },
       series: [
@@ -1045,7 +1180,7 @@ async function renderChart(container, vizSpec, rows, id) {
           emphasis: { focus: "adjacency" },
         },
       ],
-    };
+    });
   }
 
   function buildGraphOption() {
@@ -1069,7 +1204,7 @@ async function renderChart(container, vizSpec, rows, id) {
 
     const nodes = Array.from(nodesSet).map((name) => ({ name }));
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: {},
       series: [
@@ -1089,7 +1224,7 @@ async function renderChart(container, vizSpec, rows, id) {
               : undefined,
         },
       ],
-    };
+    });
   }
 
   function buildBoxplotOption() {
@@ -1109,7 +1244,7 @@ async function renderChart(container, vizSpec, rows, id) {
       toNumber(getField(r, highKey), 0),
     ]);
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "item" },
       xAxis: {
@@ -1123,7 +1258,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data: values,
         },
       ],
-    };
+    });
   }
 
   function buildCandlestickOption() {
@@ -1141,7 +1276,7 @@ async function renderChart(container, vizSpec, rows, id) {
       toNumber(getField(r, highKey), 0),
     ]);
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: { trigger: "axis" },
       xAxis: {
@@ -1158,7 +1293,7 @@ async function renderChart(container, vizSpec, rows, id) {
           data: values,
         },
       ],
-    };
+    });
   }
 
   function buildRadarOption() {
@@ -1196,7 +1331,7 @@ async function renderChart(container, vizSpec, rows, id) {
       }
     }
 
-    return {
+    return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
       tooltip: {},
       radar: { indicator: indicators },
@@ -1211,7 +1346,7 @@ async function renderChart(container, vizSpec, rows, id) {
           ],
         },
       ],
-    };
+    });
   }
 
   let option = {};
