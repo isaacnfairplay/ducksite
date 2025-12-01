@@ -1008,9 +1008,9 @@ async function renderChart(container, vizSpec, rows, id) {
     const outer = vizSpec.outer_radius || vizSpec.outerRadius || "70%";
 
     return applyDarkTheme({
-      title: vizSpec.title ? { text: vizSpec.title } : undefined,
+      title: vizSpec.title ? { text: vizSpec.title, top: "4%" } : undefined,
       tooltip: { trigger: "item" },
-      legend: { top: "5%", left: "center" },
+      legend: { top: "12%", left: "center" },
       series: [
         {
           type: "pie",
@@ -1178,6 +1178,8 @@ async function renderChart(container, vizSpec, rows, id) {
           data: nodes,
           links,
           emphasis: { focus: "adjacency" },
+          lineStyle: { color: "source", opacity: 0.6 },
+          itemStyle: { borderWidth: 1, borderColor: DARK_FG, opacity: 0.9 },
         },
       ],
     });
