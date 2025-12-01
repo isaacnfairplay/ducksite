@@ -227,7 +227,7 @@ function rewriteParquetPathsHttp(sqlText) {
   const origin = window.location.origin.replace(/\/$/, "");
   const re = /read_parquet\(\s*\[(.*?)\]\s*\)/gis;
 
-  const rewritten = sqlText.replace(re, (full, inner) => {
+  let rewritten = sqlText.replace(re, (full, inner) => {
     console.debug("[ducksite] rewriteParquetPathsHttp: found read_parquet inner:", inner);
     const parts = inner.split(",");
     const rewrittenParts = parts.map((part) => {
@@ -262,6 +262,23 @@ function rewriteParquetPathsHttp(sqlText) {
       out.slice(0, 200),
     );
     return out;
+  });
+
+  const reCsv = /read_csv_auto\(\s*'([^']+)'\s*(,|\))/gis;
+  rewritten = rewritten.replace(reCsv, (full, pathPart) => {
+    let p = pathPart;
+    if (
+      p.startsWith("http://") ||
+      p.startsWith("https://") ||
+      p.startsWith("//") ||
+      p.startsWith("/")
+    ) {
+      return full;
+    }
+    p = p.replace(/\\/g, "/");
+    const url = `${origin}/${p.replace(/^\/+/, "")}`;
+    console.debug("[ducksite] rewriteParquetPathsHttp: rewrote CSV", p, "->", url);
+    return full.replace(pathPart, url);
   });
 
   console.debug(
@@ -490,9 +507,16 @@ async function initInputsUI(inputDefs, inputs, runQuery) {
     } else {
       document.body.appendChild(bar);
     }
-  } else {
-    bar.innerHTML = "";
   }
+
+  let filtersHost = bar.querySelector(".ducksite-input-filters");
+  if (!filtersHost) {
+    filtersHost = document.createElement("div");
+    filtersHost.className = "ducksite-input-filters";
+    bar.appendChild(filtersHost);
+  }
+
+  filtersHost.innerHTML = "";
 
   for (const [name, def] of controls) {
     const visualMode = def.visual_mode || def["visual-mode"] || def.type;
@@ -590,7 +614,7 @@ async function initInputsUI(inputDefs, inputs, runQuery) {
       group.appendChild(input);
     }
 
-    bar.appendChild(group);
+    filtersHost.appendChild(group);
   }
 }
 
@@ -1349,6 +1373,30 @@ function substituteIdTemplate(template, inputs) {
   });
 }
 
+function normalizeQueryId(queryId, inputs) {
+  const sqlBase = getPageSqlBasePath();
+  const substituted = substituteIdTemplate(queryId, inputs);
+
+  let basePath = sqlBase;
+  let id = substituted;
+
+  if (!id) {
+    return { valid: false, basePath, id };
+  }
+
+  if (id.startsWith("global:")) {
+    id = id.slice("global:".length);
+    basePath = `${PATH.sqlRoot}/_global/`;
+  }
+
+  if (id === "demo_") {
+    id = "demo";
+  }
+
+  const valid = /^[A-Za-z0-9_]+$/.test(id);
+  return { valid, basePath, id };
+}
+
 export async function renderAll(pageConfig, inputs, duckdbBundle) {
   console.debug("[ducksite] renderAll: start", { pageConfig, inputs });
 
@@ -1363,47 +1411,33 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
   const charts = [];
 
   async function runQuery(queryId, chartFormatSpec = null, tableFormatSpec = null) {
-    // First, expand any `${inputs.*}` placeholders in the query identifier.
-    // This lets us treat the ID itself as a simple template, e.g.:
-    //
-    //   "global:demo_${inputs.template_view}"
-    //
-    // which becomes "global:demo_A" when template_view == "demo_A".
-    let effectiveId = substituteIdTemplate(queryId, inputs);
+    const { valid, basePath, id } = normalizeQueryId(queryId, inputs);
 
-    if (!effectiveId) {
+    if (!id) {
       console.warn("[ducksite] runQuery: empty effectiveId from", queryId);
       return [];
     }
 
-    // Cache by the fully-resolved ID so changing inputs leads to distinct
-    // cache entries when necessary.
-    const cacheKey = `${effectiveId}::${JSON.stringify(chartFormatSpec || {})}::${JSON.stringify(
+    if (!valid) {
+      console.warn("[ducksite] runQuery: skipping invalid query id", id);
+      return [];
+    }
+
+    const cacheKey = `${basePath}${id}::${JSON.stringify(chartFormatSpec || {})}::${JSON.stringify(
       tableFormatSpec || {},
     )}`;
     if (queryCache.has(cacheKey)) {
-      console.debug("[ducksite] runQuery: cache hit", effectiveId);
+      console.debug("[ducksite] runQuery: cache hit", id);
       return queryCache.get(cacheKey);
-    }
-
-    // Support a simple "global:" prefix to load compiled global views from:
-    //   /sql/_global/<name>.sql
-    //
-    // This is used by the template demo to point charts at file-source
-    // templated views like demo_A, demo_B, etc.
-    let basePath = sqlBase;
-    if (effectiveId.startsWith("global:")) {
-      effectiveId = effectiveId.slice("global:".length);
-      basePath = `${PATH.sqlRoot}/_global/`;
     }
 
     console.debug("[ducksite] runQuery: loading SQL for", {
       originalId: queryId,
-      effectiveId,
+      effectiveId: id,
       basePath,
     });
 
-    const sqlUrl = `${basePath}${effectiveId}.sql`;
+    const sqlUrl = `${basePath}${id}.sql`;
     const rawSql = await loadSqlText(sqlUrl);
     const withParams = substituteParams(rawSql, inputs, params);
     const formattedSql = buildDerivedSqlWithFormatting(withParams, chartFormatSpec, tableFormatSpec);
@@ -1488,4 +1522,6 @@ export {
   substituteParams,
   rewriteParquetPathsHttp,
   buildDerivedSqlWithFormatting,
+  normalizeQueryId,
+  initInputsUI,
 };
