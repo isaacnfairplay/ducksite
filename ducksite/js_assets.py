@@ -1,4 +1,5 @@
 from __future__ import annotations
+from importlib import resources
 from pathlib import Path
 from urllib.request import urlopen
 import ssl
@@ -35,8 +36,8 @@ def _copy_static_src_assets(site_root: Path) -> None:
     Users who want custom styling are expected to add *additional* CSS files in
     their project, not modify the generated copies in site_root.
     """
-    static_src_dir = Path(__file__).with_name("static_src")
-    if not static_src_dir.exists():
+    static_src_dir = resources.files("ducksite").joinpath("static_src")
+    if not static_src_dir.is_dir():
         return
 
     js_root = site_root / "js"
@@ -46,15 +47,17 @@ def _copy_static_src_assets(site_root: Path) -> None:
 
     # JS modules
     for src in static_src_dir.glob("*.js"):
-        dest = js_root / src.name
-        shutil.copy2(src, dest)
-        print(f"[ducksite] synced JS asset {dest}")
+        with resources.as_file(src) as src_path:
+            dest = js_root / src_path.name
+            shutil.copy2(src_path, dest)
+            print(f"[ducksite] synced JS asset {dest}")
 
     # CSS files (e.g. ducksite.css, charts.css)
     for src in static_src_dir.glob("*.css"):
-        dest = css_root / src.name
-        shutil.copy2(src, dest)
-        print(f"[ducksite] synced CSS asset {dest}")
+        with resources.as_file(src) as src_path:
+            dest = css_root / src_path.name
+            shutil.copy2(src_path, dest)
+            print(f"[ducksite] synced CSS asset {dest}")
 
 
 def _to_camel(enum_name: str) -> str:
