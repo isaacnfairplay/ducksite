@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Match, Optional
 import json
 import re
 import duckdb
@@ -26,26 +26,49 @@ class FormSpec:
     max_rows_per_user: Optional[int] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, object]) -> "FormSpec":
-        raw_inputs = data.get("inputs", [])
-        if isinstance(raw_inputs, str):
+    def from_dict(cls, data: Mapping[str, Any]) -> "FormSpec":
+        raw_inputs_obj = data.get("inputs")
+        if isinstance(raw_inputs_obj, str):
             try:
-                raw_inputs = json.loads(raw_inputs)
+                raw_inputs_obj = json.loads(raw_inputs_obj)
             except Exception:
-                raw_inputs = [raw_inputs]
+                raw_inputs_obj = [raw_inputs_obj]
+
+        raw_inputs: List[str]
+        if isinstance(raw_inputs_obj, list):
+            raw_inputs = [str(v) for v in raw_inputs_obj]
+        elif raw_inputs_obj is None:
+            raw_inputs = []
+        else:
+            try:
+                raw_inputs = [str(v) for v in list(raw_inputs_obj)]
+            except Exception:
+                raw_inputs = []
+
+        label = data.get("label")
+        image_field = data.get("image_field")
+        image_dir = data.get("image_dir")
+        allowed_email_domains = data.get("allowed_email_domains")
+        max_rows_raw = data.get("max_rows_per_user")
+        if isinstance(max_rows_raw, (int, float)):
+            max_rows = int(max_rows_raw)
+        elif isinstance(max_rows_raw, str) and max_rows_raw != "":
+            max_rows = int(max_rows_raw)
+        else:
+            max_rows = None
+
         return cls(
-            id=str(data.get("id")),
-            label=data.get("label"),
-            target_csv=str(data.get("target_csv")),
-            inputs=list(raw_inputs),
+            id=str(data.get("id", "")),
+            label=str(label) if label is not None else None,
+            target_csv=str(data.get("target_csv", "")),
+            inputs=raw_inputs,
             sql_relation_query=str(data.get("sql_relation_query", "")),
-            image_field=data.get("image_field"),
-            image_dir=data.get("image_dir"),
+            image_field=str(image_field) if image_field is not None else None,
+            image_dir=str(image_dir) if image_dir is not None else None,
             auth_required=str(data.get("auth_required", "false")).lower() == "true",
-            allowed_email_domains=data.get("allowed_email_domains"),
-            max_rows_per_user=int(data.get("max_rows_per_user"))
-            if data.get("max_rows_per_user") not in (None, "")
-            else None,
+            allowed_email_domains=
+                str(allowed_email_domains) if allowed_email_domains is not None else None,
+            max_rows_per_user=max_rows,
         )
 
     def resolve_paths(self, cfg: ProjectConfig) -> "FormSpec":
@@ -96,7 +119,7 @@ def _absolute_under_root(cfg: ProjectConfig, logical_path: str | None) -> Path:
 
 
 def substitute_inputs(template: str, inputs: Dict[str, object]) -> str:
-    def repl(match: re.Match) -> str:
+    def repl(match: Match[str]) -> str:
         key = match.group(1)
         val = inputs.get(key)
         if val is None:
@@ -223,9 +246,10 @@ def append_rows_to_csv(
                     email_col = candidate
                     break
         if max_rows_per_user and email_col and user_email:
-            cnt = con.execute(
+            result = con.execute(
                 f"SELECT COUNT(*) FROM existing WHERE {email_col} = ?", [user_email]
-            ).fetchone()[0]
+            ).fetchone()
+            cnt = int(result[0]) if result else 0
             if cnt >= max_rows_per_user:
                 raise ValueError("max_rows_per_user exceeded")
 
@@ -284,8 +308,13 @@ def process_form_submission(
           submitted_by, submitted_at (UTC ISO8601).
       - Append to CSV (canonical + schema-hash snapshot).
     """
-    inputs = payload.get("inputs") or {}
-    user_email = inputs.get("_user_email")
+    raw_inputs = payload.get("inputs")
+    if isinstance(raw_inputs, dict):
+        inputs: Dict[str, object] = {str(k): v for k, v in raw_inputs.items()}
+    else:
+        inputs = {}
+    user_email_val = inputs.get("_user_email")
+    user_email = str(user_email_val) if user_email_val is not None else None
     allowed_domains: List[str] = []
     if form.allowed_email_domains:
         parts = re.split(r"[,\s]+", str(form.allowed_email_domains))

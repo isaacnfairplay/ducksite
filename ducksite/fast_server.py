@@ -1,12 +1,16 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+from typing import Any, Dict, TYPE_CHECKING
 
 from .config import ProjectConfig
 from .forms import discover_forms, process_form_submission
 
+if TYPE_CHECKING:
+    from fastapi import FastAPI, Request  # type: ignore[import-not-found]
 
-def create_app(cfg: ProjectConfig):
+
+def create_app(cfg: ProjectConfig) -> Any:
     """
     Create a minimal ASGI app that serves cfg.site_root as static content.
 
@@ -16,21 +20,21 @@ def create_app(cfg: ProjectConfig):
     """
     try:
         from fastapi import FastAPI, Request
-        from fastapi.staticfiles import StaticFiles
+        from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
     except ImportError as e:
         raise RuntimeError(
             "fast server backend requires 'fastapi' and 'uvicorn' to be installed.\n"
             "Install with: pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org fastapi uvicorn"
         ) from e
 
-    app = FastAPI()
+    app: "FastAPI" = FastAPI()
     forms = discover_forms(cfg)
 
-    @app.post("/api/forms/submit")
-    async def submit_form(request: Request):
+    @app.post("/api/forms/submit")  # type: ignore[misc]
+    async def submit_form(request: "Request") -> Dict[str, Any]:
         ctype = request.headers.get("content-type", "")
-        payload: dict = {}
-        files: dict = {}
+        payload: Dict[str, Any] = {}
+        files: Dict[str, bytes] = {}
 
         if ctype.startswith("multipart/form-data"):
             form = await request.form()
@@ -49,7 +53,7 @@ def create_app(cfg: ProjectConfig):
                 payload = {}
 
         form_id = payload.get("form_id")
-        if not form_id or form_id not in forms:
+        if not isinstance(form_id, str) or form_id not in forms:
             return {"error": "unknown form"}
         return process_form_submission(cfg, forms[form_id], payload, files or None)
 
@@ -67,7 +71,7 @@ def serve_fast(cfg: ProjectConfig, port: int = 8080) -> None:
     Run uvicorn against the static ASGI app.
     """
     try:
-        import uvicorn
+        import uvicorn  # type: ignore[import-not-found]
     except ImportError as e:
         raise RuntimeError(
             "fast server backend requires 'uvicorn' to be installed.\n"

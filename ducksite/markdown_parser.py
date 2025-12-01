@@ -2,11 +2,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 import re
 import json
 
-import markdown  # render non-block markdown sections to HTML
+import markdown  # type: ignore[import-untyped]  # render non-block markdown sections to HTML
 
 from .html_kit import HtmlTag, HtmlAttr, open_tag, close_tag, element
 
@@ -21,9 +21,9 @@ FORM_BLOCK_RE = re.compile(r"```form\s+([A-Za-z0-9_]+)\s*\n(.*?)```", re.DOTALL)
 @dataclass
 class PageQueries:
     sql_blocks: Dict[str, str] = field(default_factory=dict)
-    echart_blocks: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    table_blocks: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    grid_specs: List[Dict] = field(default_factory=list)
+    echart_blocks: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    table_blocks: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    grid_specs: List[Dict[str, Any]] = field(default_factory=list)
     input_defs: Dict[str, Dict[str, str]] = field(default_factory=dict)
     form_defs: List[Dict[str, object]] = field(default_factory=list)
     html: str = ""
@@ -52,11 +52,11 @@ def _parse_key_values(body: str) -> Dict[str, str]:
     return result
 
 
-def _parse_block_with_format(body: str) -> Dict[str, object]:
+def _parse_block_with_format(body: str) -> Dict[str, Any]:
     lines = body.splitlines()
-    result: Dict[str, object] = {}
+    result: Dict[str, Any] = {}
 
-    def parse_format(start_idx: int):
+    def parse_format(start_idx: int) -> tuple[Dict[str, Dict[str, str]], int]:
         fmt: Dict[str, Dict[str, str]] = {}
         i = start_idx
         while i < len(lines):
@@ -115,7 +115,7 @@ def _parse_block_with_format(body: str) -> Dict[str, object]:
     return result
 
 
-def _parse_grid_block(args: str, body: str) -> Dict:
+def _parse_grid_block(args: str, body: str) -> Dict[str, Any]:
     args = args.strip()
     cols = 2
     gap = "md"
@@ -126,13 +126,13 @@ def _parse_grid_block(args: str, body: str) -> Dict:
                 cols = int(v)
             elif k == "gap":
                 gap = v
-    rows_spec: List[List[Dict]] = []
+    rows_spec: List[List[Dict[str, Any]]] = []
     for line in body.splitlines():
         line = line.strip()
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        row: List[Dict] = []
+        row: List[Dict[str, Any]] = []
         for cell in cells:
             if not cell or cell == ".":
                 continue
@@ -328,15 +328,16 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
 
 
 def build_page_config(pq: PageQueries) -> str:
-    visualizations = pq.echart_blocks
-    tables: Dict[str, Dict[str, object]] = {}
+    visualizations: Dict[str, Dict[str, Any]] = pq.echart_blocks
+    tables: Dict[str, Dict[str, Any]] = {}
 
     for tid, spec in pq.table_blocks.items():
-        tables[tid] = {"query": spec.get("query") or tid}
+        entry: Dict[str, Any] = {"query": spec.get("query") or tid}
         if "format" in spec:
-            tables[tid]["format"] = spec["format"]
+            entry["format"] = spec["format"]
+        tables[tid] = entry
 
-    config = {
+    config: Dict[str, Any] = {
         "queries": {qid: {"sql_id": qid} for qid in pq.sql_blocks.keys()},
         "visualizations": visualizations,
         "inputs": pq.input_defs,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Match, Optional
 import re
 import tomllib
 
@@ -94,7 +94,7 @@ class ProjectConfig:
 
 
 def _substitute_dirs(value: str, dirs: Dict[str, str]) -> str:
-    def repl(m: re.Match) -> str:
+    def repl(m: Match[str]) -> str:
         var = m.group(1)
         if not var.startswith("DIR_"):
             raise ValueError(f"Only DIR_* variables allowed, saw {var}")

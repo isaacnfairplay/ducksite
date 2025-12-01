@@ -8,7 +8,14 @@ sys.path.insert(0, str(ROOT))
 import pytest
 
 from ducksite.markdown_parser import parse_markdown_page, build_page_config
-from ducksite.forms import FormSpec, substitute_inputs, evaluate_form_sql, append_rows_to_csv, process_form_submission
+from ducksite.forms import (
+    FormSpec,
+    append_rows_to_csv,
+    ensure_form_target_csvs,
+    evaluate_form_sql,
+    process_form_submission,
+    substitute_inputs,
+)
 from ducksite.config import ProjectConfig
 
 
@@ -103,3 +110,30 @@ def test_process_form_submission_rejects_disallowed_domain(tmp_path):
             form,
             {"inputs": {"v": "abc", "_user_email": "user@other.net"}},
         )
+
+
+def test_formspec_from_dict_and_stub_csv(tmp_path: Path) -> None:
+    cfg = ProjectConfig(root=tmp_path, dirs={"DIR_FORMS": "static/forms"})
+    content_dir = cfg.root / "content"
+    content_dir.mkdir(parents=True)
+    md = content_dir / "forms.md"
+    md.write_text(
+        """
+```form f1
+label: Demo
+target_csv: "${DIR_FORMS}/demo.csv"
+inputs: ["a", "b"]
+sql_relation_query: |
+  select ${inputs.a} as a, ${inputs.b} as b
+```
+
+""",
+        encoding="utf-8",
+    )
+
+    ensure_form_target_csvs(cfg)
+    csv_path = tmp_path / "static" / "forms" / "demo.csv"
+    assert csv_path.exists()
+    header = csv_path.read_text(encoding="utf-8").strip()
+    assert "submitted_by" in header
+    assert "submitted_at" in header
