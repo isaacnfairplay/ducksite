@@ -328,14 +328,14 @@ def process_form_submission(
         raise ValueError("authentication required")
     if form.max_rows_per_user and not user_email:
         raise ValueError("user email required")
-    if form.auth_required and user_email:
-        auth_status = ensure_initial_password(cfg, user_email, password)
     if allowed_domains:
         if not user_email:
             raise ValueError("user email required")
         domain = str(user_email).split("@")[-1].lower()
         if domain not in allowed_domains:
             raise ValueError("email domain not allowed")
+    if form.auth_required and user_email:
+        auth_status = ensure_initial_password(cfg, user_email, password)
 
     resolved = form.resolve_paths(cfg)
 
