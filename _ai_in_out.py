@@ -381,12 +381,9 @@ def main() -> None:
 
     if not ai_path.exists():
         print(f"[scaffold] codebase.md not found at: {ai_path}")
-        sys.exit(1)
+    else:
+        scaffold_from_markdown(ai_path, root)
 
-    # 1. Apply AI edits to the codebase
-    scaffold_from_markdown(ai_path, root)
-
-    # 2. Then regenerate codebase.md from the updated tree
     generate_codebase_md(root)
 
 
