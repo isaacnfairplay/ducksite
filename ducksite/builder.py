@@ -259,6 +259,13 @@ def build_project(root: Path) -> None:
     # Build the virtual data_map.json for all file_sources; no real symlinks/copies.
     build_symlinks(cfg)
 
+    # Ensure backing CSV files exist for any forms defined in content.
+    # discover_forms() is responsible for creating stub CSVs when needed.
+    try:
+        discover_forms(cfg)
+    except Exception as e:
+        print(f"[ducksite] WARNING: failed to inspect forms while ensuring CSV stubs: {e}")
+
     named_queries: Dict[str, NamedQuery] = {}
     named_queries.update(build_file_source_queries(cfg))
     named_queries.update(load_model_queries(cfg))

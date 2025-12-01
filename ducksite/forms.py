@@ -99,6 +99,64 @@ def evaluate_form_sql(form: FormSpec, inputs: Dict[str, object]) -> List[Dict[st
         con.close()
 
 
+def _build_dummy_inputs_for_form(form: FormSpec) -> Dict[str, object]:
+    """
+    Build a minimal dummy inputs dict for introspecting a form's SQL.
+
+    We intentionally avoid any auth/domain checks here; this is only used
+    at *build time* to discover the output columns of sql_relation_query
+    so we can construct a header-only CSV stub.
+    """
+    dummy: Dict[str, object] = {}
+
+    for name in form.inputs or []:
+        dummy[name] = f"sample_{name}"
+
+    # Common auth-related fields that may appear in sql_relation_query.
+    dummy.setdefault("_user_email", "ducksite@example.com")
+    dummy.setdefault("_user_id", "ducksite-demo")
+
+    return dummy
+
+
+def _ensure_form_csv_stub(cfg: ProjectConfig, form: FormSpec) -> None:
+    """
+    Ensure the target CSV for a form exists with at least a header row.
+
+    This allows DuckDB EXPLAIN to successfully bind queries that read
+    the CSV (e.g. via read_csv_auto('forms/feedback.csv', ...)) even
+    before any real submissions have occurred.
+    """
+    resolved = form.resolve_paths(cfg)
+    csv_path = Path(resolved.target_csv)
+
+    if csv_path.exists():
+        # Real data (or an existing stub) is already present.
+        return
+
+    dummy_inputs = _build_dummy_inputs_for_form(resolved)
+
+    try:
+        rows = evaluate_form_sql(resolved, dummy_inputs)
+        cols = list(rows[0].keys()) if rows else []
+    except Exception as e:
+        # Best-effort: if we can't introspect the SQL, fall back to a single
+        # generic column so DuckDB can still parse the CSV.
+        print(
+            f"[ducksite] WARNING: failed to introspect form '{resolved.id}' "
+            f"sql_relation_query for stub CSV: {e}"
+        )
+        cols = []
+
+    if not cols:
+        cols = ["value"]
+
+    header = ",".join(cols) + "\n"
+    ensure_dir(csv_path.parent)
+    csv_path.write_text(header, encoding="utf-8")
+    print(f"[ducksite] created stub CSV for form '{resolved.id}' at {csv_path}")
+
+
 def _save_image(image_dir: Path, filename: str, data: bytes) -> Path:
     ensure_dir(image_dir)
     target = image_dir / filename
@@ -217,4 +275,12 @@ def discover_forms(cfg: ProjectConfig) -> Dict[str, FormSpec]:
         for raw in pq.form_defs:
             spec = FormSpec.from_dict(raw)
             forms[spec.id] = spec
+            # Ensure the backing CSV exists (header-only stub) so build-time
+            # DuckDB EXPLAIN calls do not fail on missing files.
+            try:
+                _ensure_form_csv_stub(cfg, spec)
+            except Exception as e:
+                print(
+                    f"[ducksite] WARNING: failed to ensure CSV stub for form '{spec.id}': {e}"
+                )
     return forms
