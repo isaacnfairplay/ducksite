@@ -7,3 +7,4 @@ uv.lock
 reload.bat
 extract_md_ai.py
 codebase.md
+node_modules/
