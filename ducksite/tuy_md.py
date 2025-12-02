@@ -55,6 +55,7 @@ def rename_sql_block(text: str, old: str, new: str) -> str:
     updated = pattern.sub(f"```sql {new}\n{body}\n```", text)
     updated = re.sub(rf"(query\s*:\s*){re.escape(old)}", rf"\g<1>{new}", updated)
     updated = re.sub(rf"(sql_id\s*:\s*){re.escape(old)}", rf"\g<1>{new}", updated)
+    updated = re.sub(rf"(data_query\s*:\s*){re.escape(old)}", rf"\g<1>{new}", updated)
     _validate_markdown_text(updated)
     return updated
 

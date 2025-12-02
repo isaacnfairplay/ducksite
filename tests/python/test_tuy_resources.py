@@ -97,7 +97,7 @@ def test_markdown_add_modify_remove_and_rename(tmp_path: Path) -> None:
         """
     )
 
-    updated = add_markdown_block(base_md, "echart", "chart_one", "query: demo_query")
+    updated = add_markdown_block(base_md, "echart", "chart_one", "data_query: demo_query")
     updated = modify_markdown_block(updated, "table", "demo_table", "query: demo_query\nlimit: 10")
 
     renamed = rename_sql_block(updated, "demo_query", "renamed_query")
@@ -109,6 +109,7 @@ def test_markdown_add_modify_remove_and_rename(tmp_path: Path) -> None:
     parsed = parse_markdown_page(page_path, Path("page.md"))
     assert "renamed_query" in parsed.sql_blocks
     assert parsed.table_blocks["demo_table"]["query"] == "renamed_query"
+    assert parsed.echart_blocks["chart_one"]["data_query"] == "renamed_query"
 
     cleaned = remove_markdown_block(renamed, "echart", "chart_one")
     page_path.write_text(cleaned, encoding="utf-8")
