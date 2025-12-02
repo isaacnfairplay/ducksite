@@ -980,26 +980,26 @@ async function renderChart(container, vizSpec, rows, id) {
       const nameKey = vizSpec.name || vizSpec.category || vizSpec.x || "category";
       const valueKey = vizSpec.value || vizSpec.y || "value";
 
-    const data = rows.map((r) => ({
-      name: getField(r, nameKey),
-      value: getField(r, valueKey),
-    }));
-    const fmt = vizSpec.format || {};
-    if (fmt && fmt[valueKey]) {
-      const safe = sanitizeName(valueKey);
-      data.forEach((d, idx) => {
-        const row = rows[idx];
-        const color = row[`__fmt_chart_${safe}_color`];
-        const hl = row[`__fmt_chart_${safe}_highlight`];
-        const formatted = buildPoint(d.value, color, hl, d.value);
-        if (formatted && formatted.itemStyle) {
-          d.itemStyle = formatted.itemStyle;
-        }
-        if (formatted && formatted.emphasis) {
-          d.emphasis = formatted.emphasis;
-        }
-      });
-    }
+      const data = rows.map((r) => ({
+        name: getField(r, nameKey),
+        value: getField(r, valueKey),
+      }));
+      const fmt = vizSpec.format || {};
+      if (fmt && fmt[valueKey]) {
+        const safe = sanitizeName(valueKey);
+        data.forEach((d, idx) => {
+          const row = rows[idx];
+          const color = row[`__fmt_chart_${safe}_color`];
+          const hl = row[`__fmt_chart_${safe}_highlight`];
+          const formatted = buildPoint(d.value, color, hl, d.value);
+          if (formatted && formatted.itemStyle) {
+            d.itemStyle = formatted.itemStyle;
+          }
+          if (formatted && formatted.emphasis) {
+            d.emphasis = formatted.emphasis;
+          }
+        });
+      }
 
       const inner =
         vizSpec.inner_radius ||
@@ -1007,8 +1007,52 @@ async function renderChart(container, vizSpec, rows, id) {
         (vizSpec.donut === "true" || vizSpec.ring === "true" ? "40%" : "0%");
       const outer = vizSpec.outer_radius || vizSpec.outerRadius || "70%";
 
+      const chartWidth = Math.max(chartRoot.clientWidth || 0, 320);
+      const chartHeight = Math.max(chartRoot.clientHeight || 0, 320);
       const titleTop = 10;
-      const legendTop = typeof titleTop === "number" ? titleTop + 26 : "14%";
+      const legendTop = typeof titleTop === "number" ? titleTop + 26 : 36;
+
+      const toPercentNumber = (value, fallback) => {
+        if (typeof value === "number") return value;
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          if (trimmed.endsWith("%")) {
+            const pct = parseFloat(trimmed.slice(0, -1));
+            if (!Number.isNaN(pct)) return pct;
+          }
+          const num = parseFloat(trimmed);
+          if (!Number.isNaN(num)) return num;
+        }
+        return fallback;
+      };
+
+      const estimateLegendHeight = (legend, itemCount) => {
+        const itemHeight = (legend && legend.itemHeight) || 14;
+        const fontSize =
+          (legend && legend.textStyle && legend.textStyle.fontSize) || 12;
+        const approxItemWidth = Math.max(fontSize * 6 + 12, 72);
+        const gap = 8;
+        const usableWidth = Math.max(chartWidth - 32, approxItemWidth);
+        const perRow = Math.max(1, Math.floor(usableWidth / (approxItemWidth + gap)));
+        const rows = Math.max(1, Math.ceil(itemCount / perRow));
+        return rows * itemHeight + Math.max(0, rows - 1) * gap + 8;
+      };
+
+      const legendHeight = estimateLegendHeight(vizSpec.legend, data.length);
+      const legendBottom = legendTop + legendHeight;
+
+      const centerYPx = (legendBottom + chartHeight) / 2;
+      const centerYPct = Math.min(
+        90,
+        Math.max(30, (centerYPx / chartHeight) * 100),
+      );
+
+      const baseOuterPct = toPercentNumber(outer, 70);
+      const availableRadiusPx = Math.max((chartHeight - legendBottom) / 2 - 8, 12);
+      const availablePct = Math.max(5, (availableRadiusPx / chartHeight) * 100);
+      const outerPct = Math.min(baseOuterPct, availablePct);
+
+      const innerPct = Math.max(0, Math.min(toPercentNumber(inner, 0), outerPct - 1));
 
       return applyDarkTheme({
         title: vizSpec.title
@@ -1023,8 +1067,8 @@ async function renderChart(container, vizSpec, rows, id) {
         series: [
           {
             type: "pie",
-            radius: [inner, outer],
-            center: ["50%", "62%"],
+            radius: [`${innerPct}%`, `${outerPct}%`],
+            center: ["50%", `${centerYPct}%`],
             data,
           },
         ],

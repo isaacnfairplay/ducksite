@@ -172,6 +172,7 @@ def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.
     <div class="grid">
       <div id="pie" class="viz"></div>
       <div id="doughnut" class="viz"></div>
+      <div id="pie-wrapped" class="viz"></div>
       <div id="sankey" class="viz"></div>
     </div>
     <script>
@@ -209,6 +210,31 @@ def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.
                   { name: "A", value: 7 },
                   { name: "B", value: 3 },
                   { name: "C", value: 2 },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          id: "pie-wrapped",
+          option: {
+            title: { text: "Pie: wide legend", top: 10, left: "center" },
+            legend: { top: 36, left: "center" },
+            series: [
+              {
+                type: "pie",
+                radius: ["0%", "70%"],
+                center: ["50%", "62%"],
+                data: [
+                  { name: "A", value: 5 },
+                  { name: "B", value: 4 },
+                  { name: "C", value: 3 },
+                  { name: "D", value: 3 },
+                  { name: "E", value: 2 },
+                  { name: "F", value: 2 },
+                  { name: "G", value: 1 },
+                  { name: "H", value: 1 },
+                  { name: "I", value: 1 },
                 ],
               },
             ],
@@ -305,6 +331,7 @@ def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.
     assert "pie: share by category" in ocr_text
     assert "sankey: simple source" in ocr_text
     assert "a" in ocr_text and "b" in ocr_text
+    assert "pie: wide legend" in ocr_text
 
     def extract_lines(img) -> list[tuple[str, tuple[int, int, int, int]]]:
         data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
@@ -387,4 +414,5 @@ def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.
 
     assert_clearance(image, "pie: share by category")
     assert_clearance(image, "doughnut: share by category")
+    assert_clearance(image, "pie: wide legend")
     assert_clearance(image, "sankey: simple source")

@@ -18,6 +18,7 @@ def test_gallery_titles_and_legends_visible(tmp_path: pytest.PathLike[str], monk
         assert "pie: share by category" in ocr_text
         assert "sankey: simple source" in ocr_text
         assert "a" in ocr_text and "b" in ocr_text
+        assert "pie: wide legend" in ocr_text
 
         def extract_lines(img) -> list[tuple[str, tuple[int, int, int, int]]]:
             data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
@@ -100,4 +101,5 @@ def test_gallery_titles_and_legends_visible(tmp_path: pytest.PathLike[str], monk
 
         assert_clearance(image, "pie: share by category")
         assert_clearance(image, "doughnut: share by category")
+        assert_clearance(image, "pie: wide legend")
         assert_clearance(image, "sankey: simple source")
