@@ -68,6 +68,10 @@ function applyDarkTheme(option) {
     radar.splitArea.areaStyle = radar.splitArea.areaStyle || {};
     radar.splitArea.areaStyle.color =
       radar.splitArea.areaStyle.color || ["rgba(15,23,42,0.8)", "rgba(15,23,42,0.4)"];
+    if (option.title && radar.center === undefined && radar.top === undefined) {
+      radar.center = ["50%", "55%"]; // leave room for title
+      radar.radius = radar.radius || "70%";
+    }
     base.radar = radar;
   }
 

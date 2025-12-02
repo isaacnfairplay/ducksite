@@ -62,4 +62,33 @@ describe('radar charts', () => {
     const option = setOptionSpy.mock.calls[0][0];
     expect(option.tooltip).toMatchObject({ trigger: 'item' });
   });
+
+  it('offsets radar center when a title is present', async () => {
+    const { renderAll } = await import('../../ducksite/static_src/render.js');
+
+    const pageConfig = {
+      visualizations: {
+        radar_chart: {
+          data_query: 'radar_query',
+          type: 'radar',
+          indicator: 'metric',
+          value: 'score',
+          title: 'Performance Overview',
+        },
+      },
+      grids: [
+        {
+          cols: 1,
+          gap: 'md',
+          rows: [[{ id: 'radar_chart', span: 1 }]],
+        },
+      ],
+    };
+
+    await renderAll(pageConfig, {}, { conn: {} });
+
+    expect(setOptionSpy).toHaveBeenCalledTimes(1);
+    const option = setOptionSpy.mock.calls[0][0];
+    expect(option.radar).toMatchObject({ center: ['50%', '55%'], radius: '70%' });
+  });
 });
