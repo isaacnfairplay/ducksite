@@ -1227,11 +1227,13 @@ async function renderChart(container, vizSpec, rows, id) {
 
       const nodes = Array.from(nodesSet).map((name) => ({ name }));
 
+      const titleTop = vizSpec.title ? 14 : 0;
+
       return applyDarkTheme({
         title: vizSpec.title
           ? {
               text: vizSpec.title,
-              top: 14,
+              top: titleTop,
               left: "center",
             }
           : undefined,
@@ -1239,7 +1241,7 @@ async function renderChart(container, vizSpec, rows, id) {
         series: [
           {
             type: "sankey",
-            top: "14%",
+            top: titleTop,
             data: nodes,
             links,
             emphasis: { focus: "adjacency" },

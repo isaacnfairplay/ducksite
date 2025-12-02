@@ -184,4 +184,33 @@ describe('layout for pie and sankey charts', () => {
     expect(option.title.top).toBeGreaterThanOrEqual(10);
     expect(series.top === undefined || series.top === null ? 'na' : series.top).not.toBe(0);
   });
+
+  it('avoids arbitrary percentage offset when sankey title is absent', async () => {
+    document.body.innerHTML = '<div class="viz" data-viz="sankey_no_title"></div>';
+
+    const { renderAll } = await import('../../ducksite/static_src/render.js');
+
+    const pageConfig = {
+      visualizations: {
+        sankey_no_title: {
+          data_query: 'q_sankey',
+          type: 'sankey',
+          source: 'src',
+          target: 'dst',
+          value: 'weight',
+        },
+      },
+      grids: [
+        { cols: 12, gap: 'md', rows: [[{ id: 'sankey_no_title', span: 12 }]] },
+      ],
+    };
+
+    await renderAll(pageConfig, {}, { conn: {} });
+
+    const option = setOptionSpy.mock.calls[0][0];
+    const series = option.series && option.series[0];
+    expect(option.title).toBeUndefined();
+    expect(series.type).toBe('sankey');
+    expect(series.top).toBe(0);
+  });
 });
