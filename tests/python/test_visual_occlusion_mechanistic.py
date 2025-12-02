@@ -30,9 +30,10 @@ def test_titles_do_not_overlap_legends(tmp_path: pytest.PathLike[str], monkeypat
 
 
 def _find_chart_boxes(image: np.ndarray) -> list[tuple[int, int, int, int]]:
-    # Borders are light gray (#d1d5db) against a white background.
-    lower = np.array([200, 206, 212], dtype=np.uint8)
-    upper = np.array([218, 222, 226], dtype=np.uint8)
+    # Borders are light gray (#d1d5db) against a white background. OpenCV loads
+    # images as BGR, so use the BGR tuple (219, 213, 209) with a small tolerance.
+    lower = np.array([213, 207, 203], dtype=np.uint8)
+    upper = np.array([225, 219, 215], dtype=np.uint8)
     mask = cv2.inRange(image, lower, upper)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     boxes: list[tuple[int, int, int, int]] = []
