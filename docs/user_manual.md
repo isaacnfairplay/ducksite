@@ -43,7 +43,7 @@ pattern = "data/demo/*.parquet"
 upstream_glob = "${DIR_FAKE}/demo-*.parquet"
 row_filter_template = "category = ?"
 ```
-This setup mirrors every `fake_upstream/demo-*.parquet` file into the generated `static/data/demo/` namespace and automatically creates per-category templated views such as `demo_A` or `demo_B`. 【F:ducksite/demo_init_toml.py†L15-L43】【F:ducksite/symlinks.py†L54-L110】
+This setup mirrors every `fake_upstream/demo-*.parquet` file into the generated `static/data/demo/` namespace and automatically creates per-category templated views such as `demo_A` or `demo_B`. Ducksite no longer writes operating-system symlinks or copies of the data; it only records the real file locations in a virtual map that the HTTP server streams directly. 【F:ducksite/demo_init_toml.py†L15-L43】【F:ducksite/symlinks.py†L54-L112】【F:ducksite/builder.py†L260-L370】
 
 ### How Ducksite interprets configuration
 - `load_project_config` validates `ducksite.toml`, substitutes `DIR_*` variables inside `upstream_glob`, and prepares paths for the builder. 【F:ducksite/config.py†L78-L98】
