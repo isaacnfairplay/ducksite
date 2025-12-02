@@ -174,6 +174,7 @@ def layout_probe_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     <div class="grid">
       <div id="pie" class="viz"></div>
       <div id="doughnut" class="viz"></div>
+      <div id="pie-wrapped" class="viz"></div>
       <div id="sankey" class="viz"></div>
     </div>
     <script>
@@ -211,6 +212,31 @@ def layout_probe_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
                   { name: "A", value: 7 },
                   { name: "B", value: 3 },
                   { name: "C", value: 2 },
+                ],
+              },
+            ],
+          },
+        },
+        {
+          id: "pie-wrapped",
+          option: {
+            title: { text: "Pie: wide legend", top: 10, left: "center" },
+            legend: { top: 36, left: "center" },
+            series: [
+              {
+                type: "pie",
+                radius: ["0%", "70%"],
+                center: ["50%", "62%"],
+                data: [
+                  { name: "A", value: 5 },
+                  { name: "B", value: 4 },
+                  { name: "C", value: 3 },
+                  { name: "D", value: 3 },
+                  { name: "E", value: 2 },
+                  { name: "F", value: 2 },
+                  { name: "G", value: 1 },
+                  { name: "H", value: 1 },
+                  { name: "I", value: 1 },
                 ],
               },
             ],
