@@ -1195,7 +1195,7 @@ async function renderChart(container, vizSpec, rows, id) {
         {
           type: "pictorialBar",
           symbol,
-          symbolRepeat: "fixed",
+          symbolRepeat: true,
           symbolSize: [20, 8],
           data: values,
         },
