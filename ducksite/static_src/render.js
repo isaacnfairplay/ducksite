@@ -1396,7 +1396,7 @@ async function renderChart(container, vizSpec, rows, id) {
 
     return applyDarkTheme({
       title: vizSpec.title ? { text: vizSpec.title } : undefined,
-      tooltip: {},
+      tooltip: { trigger: "item" },
       radar: { indicator: indicators },
       series: [
         {
