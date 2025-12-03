@@ -771,6 +771,7 @@ def _init_gallery_page(root: Path) -> None:
     ]
 
     chart_blocks: list[tuple[str, str, str]] = []
+    grid_blocks: list[tuple[str, str, str]] = []
     for idx in range(50):
         query, chart_type, x_field, y_field, title_prefix = chart_templates[idx % len(chart_templates)]
         chart_id = f"gallery_{idx + 1:02d}"
@@ -785,10 +786,16 @@ def _init_gallery_page(root: Path) -> None:
         )
         chart_blocks.append(("echart", chart_id, body))
 
+        if idx % 2 == 0:
+            row = f"| {chart_id}:6 |"
+            if idx + 1 < 50:
+                row = f"{row} gallery_{idx + 2:02d}:6 |"
+            grid_blocks.append(("grid", f"cols=12 gap=sm row={idx // 2 + 1:02d}", row))
+
     content = _render_page(
         "# Chart Gallery",
         intro,
-        base_blocks + chart_blocks,
+        base_blocks + chart_blocks + grid_blocks,
     )
     write_if_missing(gallery_md, content)
 
