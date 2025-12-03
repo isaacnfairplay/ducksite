@@ -5,32 +5,44 @@ from .demo_init_toml import init_demo_toml
 from .demo_init_content import init_demo_content
 from .demo_init_sources_sql import init_demo_sources_sql
 from .demo_init_fake_parquet import init_demo_fake_parquet
+from .demo_init_common import write_if_missing
+from .tuy_toml import render_config_text
+from .utils import ensure_dir
 
 
 def init_project(root: Path) -> None:
-    """
-    Initialise a demo ducksite project structure under `root`.
+    """Initialise a *barebones* ducksite project structure under `root`."""
 
-    Creates:
-      - ducksite.toml
-      - content/index.md
-      - content/major/index.md
-      - content/minor/index.md
-      - content/filters/index.md
-      - content/cross_filters/index.md
-      - content/forms/index.md
-      - content/models/index.md
-      - content/template/index.md
-      - sources_sql/demo_models.sql
-      - sources_sql/demo_template_[category].sql
-      - fake_upstream/demo-data.parquet
-    """
-    print(f"[ducksite:init] initializing project under {root}")
+    print(f"[ducksite:init] initializing barebones project under {root}")
+    _init_barebones(root)
+    print("[ducksite:init] done.")
+
+
+def init_demo_project(root: Path) -> None:
+    """Initialise a barebones project, then lay down the richer demo assets."""
+
+    print(f"[ducksite:demo] initializing demo project under {root}")
+    _init_barebones(root)
+    _init_demo(root)
+    print("[ducksite:demo] done.")
+
+
+def _init_demo(root: Path) -> None:
     init_demo_toml(root)
     init_demo_content(root)
     init_demo_sources_sql(root)
     init_demo_fake_parquet(root)
-    print("[ducksite:init] done.")
+
+
+def _init_barebones(root: Path) -> None:
+    ensure_dir(root / "content")
+    ensure_dir(root / "sources_sql")
+    ensure_dir(root / "static" / "forms")
+
+    toml_path = root / "ducksite.toml"
+    content = render_config_text(root, dirs={"DIR_FORMS": "static/forms"})
+
+    write_if_missing(toml_path, content)
 
 
 if __name__ == "__main__":

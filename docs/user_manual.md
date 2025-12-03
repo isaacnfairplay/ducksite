@@ -4,20 +4,20 @@ This guide assumes you installed **ducksite** from GitHub as a Python package (`
 
 ## Project setup options
 
-### Option A: extend the demo scaffold
-1. Create or empty a working directory and run the initializer:
+### Option A: build from scratch (recommended)
+1. Start with an empty directory and run the barebones initializer:
    ```bash
    ducksite init --root /path/to/project
    ```
-2. The command lays down `ducksite.toml`, demo SQL models under `sources_sql/`, markdown dashboards under `content/`, and sample Parquet data under `fake_upstream/`. You can edit or replace any of these files to suit your data while keeping the same layout.
+   This writes a minimal `ducksite.toml` plus `content/`, `sources_sql/`, and `static/forms/` directories with no demo files.
+2. Place your SQL model files in `sources_sql/` and markdown dashboards in `content/` as described later. The build step populates `static/` on demand, so you do not need to pre-create the rest of that folder.
 
-### Option B: build from scratch
-1. Start with an empty directory and create the core folders:
+### Option B: extend the demo scaffold
+1. Create or empty a working directory and run the demo bootstrapper:
    ```bash
-   mkdir -p content sources_sql static/forms
+   ducksite demo --root /path/to/project
    ```
-2. Add a minimal `ducksite.toml` (see the detailed configuration section below). For a pure SQL-only site you can omit `file_sources` entirely and still build pages.
-3. Place your SQL model files in `sources_sql/` and markdown dashboards in `content/` as described later. The build step populates `static/` on demand, so you do not need to pre-create the rest of that folder.
+2. The command first runs the same barebones initializer, then lays down `ducksite.toml`, demo SQL models under `sources_sql/`, markdown dashboards under `content/`, and sample Parquet data under `fake_upstream/`. You can edit or replace any of these files to suit your data while keeping the same layout.
 
 ## 1. Configure `ducksite.toml`
 

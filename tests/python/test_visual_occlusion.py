@@ -15,7 +15,7 @@ SNAPSHOT_HELPER = Path(__file__).resolve().parents[2] / "tools" / "snapshot_char
 
 from ducksite import js_assets
 from ducksite.builder import build_project
-from ducksite.init_project import init_project
+from ducksite.init_project import init_demo_project
 
 
 @pytest.mark.slow
@@ -144,7 +144,7 @@ def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.
 
     monkeypatch.setattr(js_assets, "_download_with_ssl_bypass", fake_download)
 
-    init_project(tmp_path)
+    init_demo_project(tmp_path)
     build_project(tmp_path)
 
     site_root = tmp_path / "static"

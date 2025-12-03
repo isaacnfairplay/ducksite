@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ducksite.builder import build_project
 from ducksite.config import load_project_config
-from ducksite.init_project import init_project
+from ducksite.init_project import init_demo_project, init_project
 
 
 def test_demo_scaffold_builds(tmp_path: Path, monkeypatch) -> None:
@@ -17,7 +17,7 @@ def test_demo_scaffold_builds(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr("ducksite.js_assets._download_with_ssl_bypass", _fake_download)
 
-    init_project(tmp_path)
+    init_demo_project(tmp_path)
     cfg = load_project_config(tmp_path)
     assert cfg.file_sources, "demo scaffold should define at least one file source"
 

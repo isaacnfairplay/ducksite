@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from .builder import build_project, serve_project
 from .watcher import watch_and_build
-from .init_project import init_project
+from .init_project import init_project, init_demo_project
 from . import tuy_md, tuy_sql, tuy_toml
 
 
@@ -26,8 +26,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "command",
         nargs="?",
         default="build",
-        choices=["build", "init", "serve", *sorted(RESOURCE_COMMANDS)],
-        help="Command to run ('build', 'init', 'serve', 'add', 'modify', or 'remove').",
+        choices=["build", "init", "demo", "serve", *sorted(RESOURCE_COMMANDS)],
+        help="Command to run ('build', 'init', 'demo', 'serve', 'add', 'modify', or 'remove').",
     )
     parser.add_argument(
         "resource",
@@ -76,6 +76,8 @@ def main() -> None:
 
     if args.command == "init":
         init_project(root)
+    elif args.command == "demo":
+        init_demo_project(root)
     elif args.command == "build":
         if args.reload:
             watch_and_build(root)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import tomllib
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .config import load_project_config
 
@@ -59,6 +59,32 @@ def _validate_config_text(root: Path, text: str) -> None:
         load_project_config(tmp_root)
 
 
+def render_config_text(
+    root: Path,
+    *,
+    dirs: Optional[Dict[str, Any]] = None,
+    file_sources: Optional[List[Dict[str, Any]]] = None,
+    comments: Optional[List[str]] = None,
+) -> str:
+    """Render and validate a ducksite.toml string using structured data.
+
+    The helper keeps the TUY tooling in charge of formatting and validation so
+    callers don't need to hand-write TOML snippets.
+    """
+
+    parts: List[str] = []
+    if comments:
+        parts.extend([f"# {line}".rstrip() for line in comments])
+        parts.append("")
+
+    rendered = _render_config({"dirs": dirs or {}, "file_sources": file_sources or []})
+    parts.append(rendered.rstrip())
+
+    final_text = "\n".join(parts).rstrip() + "\n"
+    _validate_config_text(root, final_text)
+    return final_text
+
+
 def add_file_source_block(config_text: str, block_text: str, root: Path) -> str:
     entry = _parse_file_source_block(block_text)
     data = tomllib.loads(config_text) if config_text.strip() else {}
@@ -68,6 +94,21 @@ def add_file_source_block(config_text: str, block_text: str, root: Path) -> str:
     sources.append(entry)
     data["file_sources"] = sources
     rendered = _render_config(data)
+    _validate_config_text(root, rendered)
+    return rendered
+
+
+def add_file_source_entry(
+    config_text: str, entry: Dict[str, Any], root: Path, comments: Optional[List[str]] = None
+) -> str:
+    """Add a file-source entry using structured data instead of raw TOML blocks."""
+
+    data = tomllib.loads(config_text) if config_text.strip() else {}
+    sources = list(data.get("file_sources", []) or [])
+    if any(fs.get("name") == entry.get("name") for fs in sources):
+        raise ValueError(f"File source '{entry.get('name')}' already exists")
+    sources.append(entry)
+    rendered = render_config_text(root, dirs=data.get("dirs", {}), file_sources=sources, comments=comments)
     _validate_config_text(root, rendered)
     return rendered
 

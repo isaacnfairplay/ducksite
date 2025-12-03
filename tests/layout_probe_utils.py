@@ -13,7 +13,7 @@ import pytest
 
 from ducksite import js_assets
 from ducksite.builder import build_project
-from ducksite.init_project import init_project
+from ducksite.init_project import init_demo_project
 
 SNAPSHOT_HELPER = Path(__file__).resolve().parents[1] / "tools" / "snapshot_chart.js"
 
@@ -146,7 +146,7 @@ def layout_probe_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         pytest.skip("snapshot helper missing")
 
     _apply_fake_echarts(monkeypatch)
-    init_project(tmp_path)
+    init_demo_project(tmp_path)
     build_project(tmp_path)
 
     site_root = tmp_path / "static"
