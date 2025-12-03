@@ -1,8 +1,10 @@
 from __future__ import annotations
 from pathlib import Path
-import textwrap
 
-from .demo_init_common import write_if_missing
+import tomllib
+
+from .tuy_toml import add_file_source_entry, render_config_text
+from .utils import ensure_dir
 
 
 def init_demo_toml(root: Path) -> None:
@@ -31,31 +33,46 @@ def init_demo_toml(root: Path) -> None:
     predicate based on the discovered DISTINCT `category` values.
     """
     toml_path = root / "ducksite.toml"
-    content = (
-        textwrap.dedent(
-            """
-            # ducksite.toml - dummy config for local testing
+    existing = toml_path.read_text(encoding="utf-8") if toml_path.exists() else ""
+    parsed = tomllib.loads(existing) if existing.strip() else {}
 
-            [dirs]
-            DIR_FAKE = "fake_upstream"
-            DIR_FORMS = "static/forms"
+    dirs = dict(parsed.get("dirs", {}))
+    dirs.setdefault("DIR_FORMS", "static/forms")
+    dirs.setdefault("DIR_FAKE", "fake_upstream")
 
-            [[file_sources]]
-            # Base demo file-source view over all demo Parquet files.
-            # Files from:
-            #   ${DIR_FAKE}/demo-*.parquet
-            # are mirrored virtually under:
-            #   data/demo/demo-*.parquet
-            #
-            # So the pattern is rooted at data/<name>/...
-            name = "demo"
-            template_name = "demo_[category]"
-            pattern = "data/demo/*.parquet"
-            upstream_glob = "${DIR_FAKE}/demo-*.parquet"
-            union_mode = "union_all_by_name"
-            row_filter_template = "category = ?"
-            """
-        ).strip()
-        + "\n"
+    base_text = render_config_text(
+        root,
+        dirs=dirs,
+        file_sources=parsed.get("file_sources", []),
+        comments=["ducksite.toml - dummy config for local testing"],
     )
-    write_if_missing(toml_path, content)
+
+    demo_entry = {
+        "name": "demo",
+        "template_name": "demo_[category]",
+        "pattern": "data/demo/*.parquet",
+        "upstream_glob": "${DIR_FAKE}/demo-*.parquet",
+        "union_mode": "union_all_by_name",
+        "row_filter_template": "category = ?",
+    }
+
+    try:
+        rendered = add_file_source_entry(
+            base_text,
+            demo_entry,
+            root,
+            comments=[
+                "ducksite.toml - dummy config for local testing",
+                "Base demo file-source view over all demo Parquet files.",
+                "Files from ${DIR_FAKE}/demo-*.parquet are mirrored under data/demo/demo-*.parquet.",
+            ],
+        )
+    except ValueError as exc:
+        if "already exists" in str(exc):
+            print(f"[ducksite:demo] {toml_path} already contains demo file source, skipping.")
+            return
+        raise
+
+    ensure_dir(toml_path.parent)
+    toml_path.write_text(rendered, encoding="utf-8")
+    print(f"[ducksite:demo] wrote {toml_path}")
