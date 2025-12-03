@@ -6,6 +6,7 @@ from typing import Dict, List
 
 from .config import ProjectConfig
 from .queries import load_model_queries
+from .tuy_ui import FieldSpec, prompt_form
 
 
 def _parse_model_blocks(text: str) -> Dict[str, List[str]]:
@@ -81,21 +82,74 @@ def handle(command: str, root: Path) -> None:
     text = target.read_text(encoding="utf-8") if target.exists() else ""
 
     try:
+        blocks = _parse_model_blocks(text)
         if command == "add":
-            name = input("Model name: ").strip()
-            body = input("SQL body: ")
-            updated = add_model_block(text, name, body)
+            while True:
+                values = prompt_form(
+                    "Add SQL query",
+                    "Name the query the way dashboards will reference it, then paste the full SELECT body.",
+                    [
+                        FieldSpec(name="name", label="Query name", placeholder="daily_metrics"),
+                        FieldSpec(
+                            name="body",
+                            label="SQL body",
+                            placeholder="select * from table where ...",
+                            multiline=True,
+                        ),
+                    ],
+                )
+                try:
+                    updated = add_model_block(text, values["name"], values["body"])
+                    break
+                except Exception as exc:
+                    print(f"Validation failed: {exc}")
+                    continue
         elif command == "modify":
-            name = input("Model name to modify: ").strip()
-            body = input("New SQL body: ")
-            updated = modify_model_block(text, name, body)
+            if not blocks:
+                raise ValueError("No models to modify yet")
+            choices = [(name, name) for name in sorted(blocks)]
+            picked = prompt_form(
+                "Pick SQL query to edit",
+                "Choose the model whose downstream charts should change.",
+                [FieldSpec(name="name", label="Existing model", choices=choices, default=choices[0][0])],
+            )
+            current_body = "\n".join(blocks[picked["name"]]).strip()
+            while True:
+                values = prompt_form(
+                    "Update SQL body",
+                    "Paste the replacement query. Consider whether dependent charts need new columns or filters.",
+                    [
+                        FieldSpec(name="name", label="Query name", default=picked["name"], optional=True),
+                        FieldSpec(
+                            name="body",
+                            label="SQL body",
+                            default=current_body,
+                            multiline=True,
+                        ),
+                    ],
+                )
+                try:
+                    updated = modify_model_block(text, values["name"], values["body"])
+                    break
+                except Exception as exc:
+                    print(f"Validation failed: {exc}")
+                    continue
         elif command == "remove":
-            name = input("Model name to remove: ").strip()
-            updated = remove_model_block(text, name)
+            if not blocks:
+                raise ValueError("No models to remove yet")
+            choices = [(name, name) for name in sorted(blocks)]
+            picked = prompt_form(
+                "Pick SQL query to remove",
+                "Select the model to drop; dependent markdown or charts will need updates.",
+                [FieldSpec(name="name", label="Existing model", choices=choices, default=choices[0][0])],
+            )
+            updated = remove_model_block(text, picked["name"])
         else:
             print(f"Unknown command '{command}' for SQL handler")
             return
         target.write_text(updated, encoding="utf-8")
         print(f"Updated SQL models in {target}")
+    except KeyboardInterrupt:
+        print("Cancelled")
     except Exception as exc:  # pragma: no cover - user facing
         print(f"Error: {exc}")

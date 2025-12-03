@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import textwrap
 
+import pytest
+
 from ducksite.config import load_project_config
 from ducksite.markdown_parser import parse_markdown_page
 from ducksite.queries import load_model_queries
@@ -13,7 +15,15 @@ from ducksite.tuy_md import (
     rename_sql_block,
 )
 from ducksite.tuy_sql import add_model_block, modify_model_block, remove_model_block
-from ducksite.tuy_toml import add_file_source_block, modify_file_source_block, remove_file_source_block
+from ducksite.tuy_toml import (
+    add_dir_entry,
+    add_file_source_block,
+    add_file_source_entry,
+    modify_dir_entry,
+    modify_file_source_block,
+    remove_dir_entry,
+    remove_file_source_block,
+)
 
 
 def test_toml_add_modify_remove(tmp_path: Path) -> None:
@@ -28,6 +38,19 @@ def test_toml_add_modify_remove(tmp_path: Path) -> None:
         """
     )
 
+    config_text = base
+
+    # Directory CRUD via structured helpers.
+    config_text = add_dir_entry(config_text, "DIR_FORMS", "static/forms", tmp_path)
+    (tmp_path / "ducksite.toml").write_text(config_text, encoding="utf-8")
+    cfg = load_project_config(tmp_path)
+    assert cfg.dirs["DIR_FORMS"] == "static/forms"
+
+    config_text = modify_dir_entry(config_text, "DIR_FORMS", "forms_sink", tmp_path)
+    (tmp_path / "ducksite.toml").write_text(config_text, encoding="utf-8")
+    cfg = load_project_config(tmp_path)
+    assert cfg.dirs["DIR_FORMS"] == "forms_sink"
+
     new_block = textwrap.dedent(
         """
         [[file_sources]]
@@ -36,8 +59,8 @@ def test_toml_add_modify_remove(tmp_path: Path) -> None:
         """
     )
 
-    updated = add_file_source_block(base, new_block, tmp_path)
-    (tmp_path / "ducksite.toml").write_text(updated, encoding="utf-8")
+    config_text = add_file_source_block(config_text, new_block, tmp_path)
+    (tmp_path / "ducksite.toml").write_text(config_text, encoding="utf-8")
     cfg = load_project_config(tmp_path)
     assert {fs.name for fs in cfg.file_sources} == {"demo", "extra"}
 
@@ -48,16 +71,21 @@ def test_toml_add_modify_remove(tmp_path: Path) -> None:
         pattern = "data/demo/new-*.parquet"
         """
     )
-    updated = modify_file_source_block(updated, modified_block, tmp_path)
-    (tmp_path / "ducksite.toml").write_text(updated, encoding="utf-8")
+    config_text = modify_file_source_block(config_text, modified_block, tmp_path)
+    (tmp_path / "ducksite.toml").write_text(config_text, encoding="utf-8")
     cfg = load_project_config(tmp_path)
     demo = [fs for fs in cfg.file_sources if fs.name == "demo"][0]
     assert demo.pattern == "data/demo/new-*.parquet"
 
-    updated = remove_file_source_block(updated, "demo", tmp_path)
-    (tmp_path / "ducksite.toml").write_text(updated, encoding="utf-8")
+    config_text = remove_file_source_block(config_text, "demo", tmp_path)
+    (tmp_path / "ducksite.toml").write_text(config_text, encoding="utf-8")
     cfg = load_project_config(tmp_path)
     assert {fs.name for fs in cfg.file_sources} == {"extra"}
+
+    config_text = remove_dir_entry(config_text, "DIR_FORMS", tmp_path)
+    (tmp_path / "ducksite.toml").write_text(config_text, encoding="utf-8")
+    cfg = load_project_config(tmp_path)
+    assert "DIR_FORMS" not in cfg.dirs
 
 
 def test_sql_add_modify_remove(tmp_path: Path) -> None:
@@ -115,3 +143,29 @@ def test_markdown_add_modify_remove_and_rename(tmp_path: Path) -> None:
     page_path.write_text(cleaned, encoding="utf-8")
     parsed = parse_markdown_page(page_path, Path("page.md"))
     assert "chart_one" not in parsed.echart_blocks
+
+
+def test_file_source_validation_uses_dir_placeholders(tmp_path: Path) -> None:
+    config_text = "[dirs]\nDIR_FORMS = \"static/forms\"\n"
+    bad_block = textwrap.dedent(
+        """
+        [[file_sources]]
+        name = "invalid"
+        pattern = "data/invalid/*.parquet"
+        upstream_glob = "${DIR_UNKNOWN}/demo.parquet"
+        """
+    )
+
+    with pytest.raises(ValueError, match="DIR_UNKNOWN"):
+        add_file_source_block(config_text, bad_block, tmp_path)
+
+    with pytest.raises(ValueError, match="DIR_UNKNOWN"):
+        add_file_source_entry(
+            config_text,
+            {
+                "name": "invalid",
+                "pattern": "data/invalid/*.parquet",
+                "upstream_glob": "${DIR_UNKNOWN}/demo.parquet",
+            },
+            tmp_path,
+        )

@@ -117,12 +117,12 @@ ducksite serve --root /path/to/project --port 8080 --server builtin
 
 ## 5. TUY helpers for quick edits
 
-Use the interactive TUY commands when you want to adjust common project files without opening an editor. Each command prompts for the values it needs and validates the updated file before saving it.
+Use the interactive TUY commands when you want to adjust common project files without opening an editor. The Textual interface supports multiline editing, color hints, and keyboard shortcuts (Tab/Ctrl+N/Ctrl+P to move, Ctrl+S to save) and validates every change with the same checks the build uses so errors surface immediately.
 
 ### `ducksite add|modify|remove toml`
 - Operates on `ducksite.toml` at the project root and fails fast if that file is missing.
-- `add` and `modify` prompt for a file-source name, pattern, optional `template_name`, and optional `upstream_glob`, then write or replace a single `[[file_sources]]` block. `modify` replaces the block that matches the provided `name`.
-- `remove` asks for a file-source name and drops that block.
+- `add` and `modify` prompt for either a `[dirs]` entry (DIR_* constants such as `DIR_FORMS = "static/forms"`, useful for templated paths like `{DIR_FORMS}/myform/*.csv`) or a `[[file_sources]]` block. Inputs are validated through `load_project_config`, so undefined `DIR_*` placeholders or malformed file-source options are caught before saving.
+- `remove` asks for a directory constant or a file-source name and drops that block.
 - Example session:
   ```bash
   ducksite add toml
@@ -131,8 +131,8 @@ Use the interactive TUY commands when you want to adjust common project files wi
 
 ### `ducksite add|modify|remove sql`
 - Targets `sources_sql/models.sql`, creating `sources_sql/` if it does not exist.
-- `add` appends a new `-- name:` block using the provided model name and SQL body.
-- `modify` replaces the body of the named model; `remove` deletes the block entirely.
+- `add` appends a new `-- name:` block using the provided model name and SQL body. Multiline entry is supported.
+- `modify` replaces the body of the named model; `remove` deletes the block entirely. Models are validated by loading them through the same path used during `ducksite build`.
 - Example session:
   ```bash
   ducksite modify sql
