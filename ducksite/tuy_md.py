@@ -12,7 +12,7 @@ def _validate_markdown_text(text: str) -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td) / "page.md"
         tmp.write_text(text, encoding="utf-8")
-        parse_markdown_page(tmp, tmp.name)
+        parse_markdown_page(tmp, tmp)
 
 
 def _block_regex(kind: str, block_id: str) -> re.Pattern[str]:

@@ -30,12 +30,10 @@ ducksite = ["static_src/*.js", "static_src/*.css"]
 
 [tool.mypy]
 strict = true
+mypy_path = "stubs"
+files = ["ducksite"]
 
 [tool.pytest.ini_options]
 markers = [
   "slow: marks slow-running integration checks",
 ]
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-ignore_errors = true

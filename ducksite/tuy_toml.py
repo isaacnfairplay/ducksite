@@ -75,11 +75,14 @@ def remove_dir_entry(
 
 
 def _parse_file_source_block(block_text: str) -> Dict[str, Any]:
-    data = tomllib.loads(block_text)
+    data: Dict[str, Any] = tomllib.loads(block_text)
     file_sources = data.get("file_sources")
-    if not file_sources:
+    if not isinstance(file_sources, list) or not file_sources:
         raise ValueError("Block must define [[file_sources]]")
-    entry = file_sources[0]
+    entry_raw = file_sources[0]
+    if not isinstance(entry_raw, dict):
+        raise ValueError("File source must be a mapping")
+    entry: Dict[str, Any] = dict(entry_raw)
     if "name" not in entry:
         raise ValueError("File source block must include a name")
     return entry
@@ -307,6 +310,7 @@ def handle(command: str, root: Path) -> None:
     text = cfg_path.read_text(encoding="utf-8")
 
     try:
+        updated: str = text
         data = tomllib.loads(text) if text.strip() else {}
         dirs = data.get("dirs", {}) or {}
         file_sources = data.get("file_sources", []) or []
