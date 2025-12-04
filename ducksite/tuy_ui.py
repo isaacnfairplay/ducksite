@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, cast
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
@@ -98,11 +98,12 @@ class _FormApp(App[Dict[str, str] | None]):
                         yield Static(field.help_text, classes="field-help")
 
                     if field.choices:
+                        options = [
+                            Select[str].Option(label, value)
+                            for value, label in field.choices
+                        ]
                         select = Select[str](
-                            (
-                                Select.Option(label, value)
-                                for value, label in field.choices
-                            ),
+                            options,
                             prompt=field.placeholder or "Select an option",
                             allow_blank=field.optional,
                             value=field.default or None,
@@ -115,7 +116,7 @@ class _FormApp(App[Dict[str, str] | None]):
                         text_area.value = field.default
                         text_area.placeholder = field.placeholder
                         text_area.soft_wrap = True
-                        self._inputs[field.name] = text_area  # type: ignore[assignment]
+                        self._inputs[field.name] = text_area
                         self._ordered_widgets.append(text_area)
                         yield text_area
                     else:
@@ -163,7 +164,8 @@ class _FormApp(App[Dict[str, str] | None]):
             return
         current = self.focused
         try:
-            idx = self._ordered_widgets.index(current) if current else 0
+            typed_current = cast(Input | TextArea | Select[str] | None, current)
+            idx = self._ordered_widgets.index(typed_current) if typed_current else 0
         except ValueError:
             idx = 0
         next_idx = (idx + delta) % len(self._ordered_widgets)
