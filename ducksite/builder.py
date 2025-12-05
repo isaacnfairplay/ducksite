@@ -419,6 +419,9 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 return False
 
             stat = mapped_path.stat()
+            last_modified = datetime.datetime.fromtimestamp(
+                stat.st_mtime, tz=datetime.timezone.utc
+            ).replace(microsecond=0)
             ims = self.headers.get("If-Modified-Since")
             if ims:
                 try:
@@ -428,9 +431,12 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 if ims_dt:
                     if ims_dt.tzinfo is None:
                         ims_dt = ims_dt.replace(tzinfo=datetime.timezone.utc)
-                    if stat.st_mtime <= ims_dt.timestamp():
+                    if ims_dt >= last_modified:
                         self.send_response(http.HTTPStatus.NOT_MODIFIED)
-                        self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+                        self.send_header(
+                            "Last-Modified",
+                            self.date_time_string(last_modified.timestamp()),
+                        )
                         self.send_header("Vary", "Accept-Encoding")
                         self.end_headers()
                         return True
@@ -445,7 +451,9 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
             self.send_header("Content-type", self.guess_type(str(mapped_path)))
             self.send_header("Content-Encoding", "gzip")
             self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+            self.send_header(
+                "Last-Modified", self.date_time_string(last_modified.timestamp())
+            )
             self.send_header("Vary", "Accept-Encoding")
             self.end_headers()
             if self.command != "HEAD":
