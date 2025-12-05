@@ -43,6 +43,7 @@ class FileSourceConfig:
     upstream_glob: Optional[str] = None
     union_mode: str = "union_all_by_name"
     time_window: Optional[Dict[str, Any]] = None
+    plugin: Optional[str] = None
 
     # Optional static row filter applied to *all* rows for this file source.
     # When set, it is ANDed into both the base file-source view and any
@@ -123,6 +124,7 @@ def load_project_config(root: Path) -> ProjectConfig:
                 template_name=fs.get("template_name"),
                 pattern=fs.get("pattern", "data/*.parquet"),
                 upstream_glob=fs.get("upstream_glob"),
+                plugin=fs.get("plugin"),
                 union_mode=fs.get("union_mode", "union_all_by_name"),
                 time_window=fs.get("time_window"),
                 row_filter=fs.get("row_filter"),

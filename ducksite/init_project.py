@@ -5,6 +5,7 @@ from .demo_init_toml import init_demo_toml
 from .demo_init_content import init_demo_content
 from .demo_init_sources_sql import init_demo_sources_sql
 from .demo_init_fake_parquet import init_demo_fake_parquet
+from .demo_init_virtual_plugin import init_demo_virtual_plugin
 from .demo_init_common import write_if_missing
 from .tuy_toml import render_config_text
 from .utils import ensure_dir
@@ -32,6 +33,7 @@ def _init_demo(root: Path) -> None:
     init_demo_content(root)
     init_demo_sources_sql(root)
     init_demo_fake_parquet(root)
+    init_demo_virtual_plugin(root)
 
 
 def _init_barebones(root: Path) -> None:

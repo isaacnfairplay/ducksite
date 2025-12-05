@@ -3,7 +3,12 @@ from pathlib import Path
 import glob
 import json
 
-from .config import ProjectConfig
+from .config import FileSourceConfig, ProjectConfig
+from .virtual_parquet import (
+    VirtualParquetManifest,
+    load_virtual_parquet_manifest,
+    write_row_filter_meta,
+)
 from .utils import ensure_dir
 
 
@@ -98,8 +103,34 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     ensure_dir(site_root)
 
     data_map: dict[str, str] = {}
+    row_filters: dict[str, str] = {}
+
+    def ingest_manifest(
+        fs_cfg: FileSourceConfig | None, fs_name: str | None, manifest: VirtualParquetManifest
+    ) -> None:
+        if manifest.template_name and fs_cfg and not fs_cfg.template_name:
+            fs_cfg.template_name = manifest.template_name
+        if manifest.row_filter_template and fs_cfg and not fs_cfg.row_filter_template:
+            fs_cfg.row_filter_template = manifest.row_filter_template
+
+        fs_root = Path("data") / (fs_name or "")
+        for f in manifest.files:
+            key = (fs_root / f.http_path).as_posix() if not f.http_path.startswith("data/") else f.http_path
+            if key in data_map and data_map[key] != f.physical_path:
+                print(
+                    f"[ducksite] WARNING: duplicate virtual path {key}; "
+                    f"overwriting {data_map[key]} with {f.physical_path}"
+                )
+            data_map[key] = f.physical_path
+            if f.row_filter:
+                row_filters[key] = f.row_filter
 
     for fs in cfg.file_sources:
+        if fs.plugin:
+            manifest = load_virtual_parquet_manifest(fs.plugin, cfg)
+            ingest_manifest(fs, fs.name, manifest)
+            continue
+
         if not fs.upstream_glob:
             continue
 
@@ -161,6 +192,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     out_path = site_root / "data_map.json"
     ensure_dir(out_path.parent)
     out_path.write_text(json.dumps(data_map, indent=2), encoding="utf-8")
+    write_row_filter_meta(site_root, row_filters)
     print(f"[ducksite] wrote virtual data map {out_path} ({len(data_map)} entries)")
 
 

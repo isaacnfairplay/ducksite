@@ -43,6 +43,7 @@ def test_init_demo_project_files(tmp_path: Path, monkeypatch) -> None:
         "fake_upstream/demo-B.parquet",
         "fake_upstream/demo-C.parquet",
         "fake_upstream/nytaxi-2023-01.parquet",
+        "plugins/demo_plugin.py",
     }
 
     assert _list_files(tmp_path) == expected
@@ -51,6 +52,9 @@ def test_init_demo_project_files(tmp_path: Path, monkeypatch) -> None:
     demo_fs = next(fs for fs in cfg.file_sources if fs.name == "demo")
     assert demo_fs.template_name == "demo_[category]"
     assert demo_fs.upstream_glob.endswith("demo-*.parquet")
+
+    plugin_fs = next(fs for fs in cfg.file_sources if fs.name == "demo_plugin")
+    assert plugin_fs.plugin == "plugins/demo_plugin.py"
 
     parsed = parse_markdown_page(tmp_path / "content" / "index.md", Path("index.md"))
     assert "demo_summary" in parsed.sql_blocks

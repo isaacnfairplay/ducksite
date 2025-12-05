@@ -192,6 +192,7 @@ def _prompt_file_source_block(existing: Dict[str, Any] | None = None) -> str:
         "pattern": "data/*.parquet",
         "template_name": "",
         "upstream_glob": "",
+        "plugin": "",
         "row_filter": "",
         "row_filter_template": "",
         "on_empty": "error",
@@ -235,6 +236,14 @@ def _prompt_file_source_block(existing: Dict[str, Any] | None = None) -> str:
                 help_text="Actual disk glob. Supports ${DIR_*} placeholders.",
             ),
             FieldSpec(
+                name="plugin",
+                label="plugin (optional)",
+                default=defaults["plugin"],
+                placeholder="plugins/example.py:build_manifest",
+                optional=True,
+                help_text="Point to a virtual parquet plugin instead of an upstream glob.",
+            ),
+            FieldSpec(
                 name="row_filter",
                 label="row_filter (optional)",
                 default=defaults["row_filter"],
@@ -269,6 +278,8 @@ def _prompt_file_source_block(existing: Dict[str, Any] | None = None) -> str:
         parts.append(f"template_name = \"{values['template_name']}\"")
     if values.get("upstream_glob"):
         parts.append(f"upstream_glob = \"{values['upstream_glob']}\"")
+    if values.get("plugin"):
+        parts.append(f"plugin = \"{values['plugin']}\"")
     if values.get("row_filter"):
         parts.append(f"row_filter = \"{values['row_filter']}\"")
     if values.get("row_filter_template"):
