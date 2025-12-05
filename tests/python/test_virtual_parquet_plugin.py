@@ -11,6 +11,7 @@ from ducksite.config import load_project_config
 from ducksite.queries import build_file_source_queries
 from ducksite.symlinks import build_symlinks
 from ducksite.tuy_plugin import write_blank_plugin
+from ducksite.virtual_parquet import DEFAULT_PLUGIN_CALLABLE, _split_plugin_ref
 
 
 def test_plugin_loaded_from_external_path(tmp_path: Path) -> None:
@@ -127,6 +128,20 @@ def test_plugin_target_missing(tmp_path: Path) -> None:
     cfg = load_project_config(project_root)
     with pytest.raises(ImportError):
         build_symlinks(cfg)
+
+
+def test_split_plugin_ref_windows_drive_letter(tmp_path: Path) -> None:
+    module_ref, attr = _split_plugin_ref(r"C:\\plugins\\demo.py")
+
+    assert module_ref == r"C:\\plugins\\demo.py"
+    assert attr == DEFAULT_PLUGIN_CALLABLE
+
+
+def test_split_plugin_ref_windows_drive_with_callable(tmp_path: Path) -> None:
+    module_ref, attr = _split_plugin_ref(r"C:\\plugins\\demo.py:custom")
+
+    assert module_ref == r"C:\\plugins\\demo.py"
+    assert attr == "custom"
 
 
 def test_blank_plugin_scaffold_is_loadable(tmp_path: Path) -> None:

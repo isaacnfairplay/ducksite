@@ -33,10 +33,17 @@ class VirtualParquetManifest:
 def _split_plugin_ref(raw: str) -> tuple[str, str]:
     if not raw:
         raise ValueError("plugin reference cannot be empty")
+    module_ref, attr = raw, DEFAULT_PLUGIN_CALLABLE
     if ":" in raw:
-        module_ref, attr = raw.rsplit(":", 1)
-    else:
-        module_ref, attr = raw, DEFAULT_PLUGIN_CALLABLE
+        # Avoid treating a Windows drive letter (e.g., "C:\\path") as the
+        # separator between the module and callable name.
+        colon_index = raw.rfind(":")
+        if not (
+            colon_index == 1
+            and raw[0].isalpha()
+            and raw[2:3] in {"\\", "/"}
+        ):
+            module_ref, attr = raw.rsplit(":", 1)
     if not module_ref or not attr:
         raise ValueError(f"invalid plugin reference: {raw}")
     return module_ref, attr
