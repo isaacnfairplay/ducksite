@@ -46,6 +46,16 @@ The `tools/performance_probe.py` script times a full demo build, starts the buil
 * Keep-alive plus immutable caching keep connections warm and steer browsers away from redundant range/HEAD work; even when validators are omitted HTML/JS still dominate, so keeping those bundles cached and compressed matters most.
 * Parquet scans stay under 2 ms even without HTTPFS; with the metadata cache enabled (when available) the query component should shrink further because repeated range lookups avoid extra HEAD probes.
 
+## Virtual plugin vs. static file source checks
+
+Use `python -m tools.plugin_performance_probe` to time the demo site when the demo plugin is enabled alongside the static demo Parquet files. The probe compares cold and cached asset loads plus a plugin-backed parquet fetch versus the static demo parquet under the same cache headers so you can spot regressions from plugin overhead before shipping your own plugin.
+
+### What improved in the latest probe
+
+- Pareto entries now carry an explicit "action" string and measured impact so each item explains how the time was reduced.
+- Plugin versus static parquet timings are recorded together, making plugin overhead visible next to the cached asset savings.
+- The integration test enforces those Pareto details, guarding against regressions in how results are reported.
+
 ## Branch progress to date
 
 * Added coverage and server behavior for HTTP range handling, `If-Modified-Since` validation, and httpfs-backed DuckDB queries to keep reloads predictable.

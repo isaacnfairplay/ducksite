@@ -4,13 +4,14 @@ from pathlib import Path
 from .builder import build_project, serve_project
 from .watcher import watch_and_build
 from .init_project import init_project, init_demo_project
-from . import tuy_md, tuy_sql, tuy_toml
+from . import tuy_md, tuy_plugin, tuy_sql, tuy_toml
 
 
 RESOURCE_HANDLERS = {
     "toml": tuy_toml,
     "sql": tuy_sql,
     "md": tuy_md,
+    "plugin": tuy_plugin,
 }
 
 
@@ -32,7 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "resource",
         nargs="?",
-        help="Resource type for 'add', 'modify', or 'remove' ('toml', 'sql', or 'md').",
+        help="Resource type for 'add', 'modify', or 'remove' ('toml', 'sql', 'md', or 'plugin').",
     )
     parser.add_argument(
         "--root",
@@ -67,10 +68,14 @@ def main() -> None:
 
     if args.command in RESOURCE_COMMANDS:
         if not args.resource:
-            parser.error(f"{args.command} requires a resource type ('toml', 'sql', 'md').")
+            parser.error(
+                f"{args.command} requires a resource type ('toml', 'sql', 'md', or 'plugin')."
+            )
         handler_module = RESOURCE_HANDLERS.get(args.resource)
         if handler_module is None:
-            parser.error(f"Unknown resource type '{args.resource}' (choose 'toml', 'sql', or 'md').")
+            parser.error(
+                f"Unknown resource type '{args.resource}' (choose 'toml', 'sql', 'md', or 'plugin')."
+            )
         handler_module.handle(args.command, root)
         return
 

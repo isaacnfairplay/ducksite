@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from ducksite import cli, tuy_toml
+from ducksite import cli, tuy_plugin, tuy_toml
 
 
 def test_dispatches_to_resource_handler(monkeypatch, tmp_path):
@@ -15,6 +15,21 @@ def test_dispatches_to_resource_handler(monkeypatch, tmp_path):
 
     monkeypatch.setattr(tuy_toml, "handle", fake_handle)
     monkeypatch.setattr(sys, "argv", ["ducksite", "add", "toml", "--root", str(tmp_path)])
+
+    cli.main()
+
+    assert called["args"][0] == "add"
+    assert called["args"][1] == tmp_path.resolve()
+
+
+def test_dispatches_plugin_handler(monkeypatch, tmp_path):
+    called = {}
+
+    def fake_handle(command: str, root):
+        called["args"] = (command, root)
+
+    monkeypatch.setattr(tuy_plugin, "handle", fake_handle)
+    monkeypatch.setattr(sys, "argv", ["ducksite", "add", "plugin", "--root", str(tmp_path)])
 
     cli.main()
 

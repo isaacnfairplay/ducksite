@@ -3,6 +3,7 @@ from pathlib import Path
 
 import tomllib
 
+from .demo_init_virtual_plugin import DEMO_PLUGIN_NAME
 from .tuy_toml import add_file_source_entry, render_config_text
 from .utils import ensure_dir
 
@@ -69,9 +70,33 @@ def init_demo_toml(root: Path) -> None:
         )
     except ValueError as exc:
         if "already exists" in str(exc):
-            print(f"[ducksite:demo] {toml_path} already contains demo file source, skipping.")
-            return
-        raise
+            print(
+                f"[ducksite:demo] {toml_path} already contains demo file source, skipping insert."
+            )
+            rendered = base_text
+        else:
+            raise
+
+    plugin_entry = {
+        "name": DEMO_PLUGIN_NAME,
+        "pattern": f"data/{DEMO_PLUGIN_NAME}/*.parquet",
+        "plugin": f"plugins/{DEMO_PLUGIN_NAME}.py",
+        "template_name": "demo_plugin_[category]",
+        "row_filter_template": "category = ?",
+    }
+
+    try:
+        rendered = add_file_source_entry(
+            rendered,
+            plugin_entry,
+            root,
+            comments=[
+                "ducksite.toml - dummy config for local testing",
+                "Virtual plugin example that mirrors demo-A/B/C through a plugin manifest.",
+            ],
+        )
+    except ValueError:
+        print(f"[ducksite:demo] {toml_path} already contains plugin file source, skipping.")
 
     ensure_dir(toml_path.parent)
     toml_path.write_text(rendered, encoding="utf-8")

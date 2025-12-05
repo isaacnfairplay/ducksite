@@ -164,6 +164,25 @@ def _load_data_map(site_root: Path) -> Dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
+def _load_row_filters(site_root: Path) -> Dict[str, str]:
+    path = site_root / "data_map_meta.json"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"[ducksite] WARNING: failed to parse {path}: {e}")
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    filters = raw.get("row_filters")
+    if not isinstance(filters, dict):
+        return {}
+    return {str(k): str(v) for k, v in filters.items() if isinstance(v, str)}
+
+
 def _logical_prefix_token(http_path: str) -> str:
     """
     Heuristic to extract the "logical prefix" token used for prefix-based
@@ -260,6 +279,7 @@ def build_file_source_queries(
 
     site_root = cfg.site_root
     data_map = _load_data_map(site_root)
+    row_filters = _load_row_filters(site_root)
 
     local_con: Optional[duckdb.DuckDBPyConnection] = None
     try:
@@ -283,12 +303,26 @@ def build_file_source_queries(
 
             # HTTP-visible paths for final SQL.
             http_paths = list(rel_paths)
-            http_read_expr = _build_read_parquet_expr(http_paths)
             base_where = fs.row_filter or "TRUE"
+
+            def select_with_filters(paths: List[str], predicate: str) -> str:
+                filtered = [(p, row_filters.get(p)) for p in paths]
+                has_row_filters = any(rf for _p, rf in filtered)
+                if not has_row_filters:
+                    return f"SELECT * FROM {_build_read_parquet_expr(paths)} WHERE {predicate}"
+                selects: List[str] = []
+                for p, rf in filtered:
+                    where = predicate
+                    if rf:
+                        where = f"({predicate}) AND ({rf})" if predicate != "TRUE" else rf
+                    selects.append(
+                        f"SELECT * FROM {_build_read_parquet_expr([p])} WHERE {where}"
+                    )
+                return " UNION ALL ".join(selects)
 
             # Base (non-templated) file-source view.
             if fs.name:
-                sql = f"SELECT * FROM {http_read_expr} WHERE {base_where}"
+                sql = select_with_filters(http_paths, base_where)
                 result[fs.name] = NamedQuery(
                     name=fs.name,
                     sql=sql,
@@ -391,11 +425,7 @@ def build_file_source_queries(
                     # use the full list so the feature degrades gracefully.
                     value_paths = http_paths
 
-                http_read_expr_v = _build_read_parquet_expr(value_paths)
-
-                # IMPORTANT: final SQL uses HTTP-visible paths so DuckDB-Wasm
-                # can fetch via httpfs. Only EXPLAIN/sampling used physical paths.
-                view_sql = f"SELECT * FROM {http_read_expr_v} WHERE {predicate}"
+                view_sql = select_with_filters(value_paths, predicate)
                 suffix = _slug_value(v)
                 if not base_name:
                     view_name = suffix
