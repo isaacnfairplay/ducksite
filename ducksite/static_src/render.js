@@ -6,7 +6,7 @@
 //   - we rewrite those to absolute HTTP URLs based on window.location.origin
 //   - DuckDB's httpfs extension handles range/caching against the HTTP server.
 
-import { initDuckDB, executeQuery } from "./duckdb_runtime.js";
+import { initDuckDB, executeQuery, ensureHttpfs } from "./duckdb_runtime.js";
 import { CLASS, DATA, PATH } from "./ducksite_contract.js";
 
 const DARK_BG = "#020617";
@@ -1607,6 +1607,7 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
   const sqlBase = getPageSqlBasePath();
   const duckdb = duckdbBundle && duckdbBundle.conn ? duckdbBundle : await initDuckDB();
   const { conn } = duckdb;
+  await ensureHttpfs(conn);
 
   const inputDefs = pageConfig.inputs || {};
   const params = buildParamsFromInputs(inputDefs, inputs);
