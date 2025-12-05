@@ -13,6 +13,17 @@ const DEFAULT_DUCKDB_WASM_URL =
 let duckdbModulePromise = null;
 let duckdbInstance = null;
 let duckdbConnection = null;
+let duckdbHttpfsConfigured = false;
+
+export async function ensureHttpfs(conn) {
+  if (duckdbHttpfsConfigured) {
+    return;
+  }
+  console.debug("[ducksite] initDuckDB: enabling httpfs with metadata cache");
+  await conn.query("LOAD httpfs;");
+  await conn.query("SET enable_http_metadata_cache=true;");
+  duckdbHttpfsConfigured = true;
+}
 
 async function loadDuckDBModule() {
   if (duckdbModulePromise) {
@@ -56,6 +67,7 @@ export async function initDuckDB() {
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
 
     const conn = await db.connect();
+    await ensureHttpfs(conn);
     duckdbInstance = db;
     duckdbConnection = conn;
 

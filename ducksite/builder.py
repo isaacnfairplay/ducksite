@@ -4,13 +4,17 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, IO, List, cast
 
+import datetime
 import duckdb
+import gzip
 import http.server
+import http
 import json
 import cgi
 import shutil
 import socketserver
 import threading
+from email.utils import parsedate_to_datetime
 
 from .config import load_project_config, ProjectConfig
 from .cte_compiler import compile_query, write_compiled_sql
@@ -352,6 +356,8 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
     directory = str(cfg.site_root)
 
     class DucksiteRequestHandler(http.server.SimpleHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         """
         Custom HTTP handler that implements *virtual symlinks* for /data/...
 
@@ -389,6 +395,107 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
 
             return super().translate_path(path)
 
+        _COMPRESSIBLE_SUFFIXES = {
+            ".html",
+            ".js",
+            ".css",
+            ".json",
+            ".txt",
+            ".svg",
+        }
+
+        def _maybe_send_gzip(self) -> bool:
+            if self.command not in {"GET", "HEAD"}:
+                return False
+            if "gzip" not in (self.headers.get("Accept-Encoding", "")):
+                return False
+            if self.headers.get("Range"):
+                return False
+
+            mapped_path = Path(self.translate_path(self.path))
+            if not mapped_path.exists() or mapped_path.is_dir():
+                return False
+            if mapped_path.suffix.lower() not in self._COMPRESSIBLE_SUFFIXES:
+                return False
+
+            stat = mapped_path.stat()
+            ims = self.headers.get("If-Modified-Since")
+            if ims:
+                try:
+                    ims_dt = parsedate_to_datetime(ims)
+                except (TypeError, ValueError):
+                    ims_dt = None
+                if ims_dt:
+                    if ims_dt.tzinfo is None:
+                        ims_dt = ims_dt.replace(tzinfo=datetime.timezone.utc)
+                    if stat.st_mtime <= ims_dt.timestamp():
+                        self.send_response(http.HTTPStatus.NOT_MODIFIED)
+                        self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+                        self.send_header("Vary", "Accept-Encoding")
+                        self.end_headers()
+                        return True
+
+            try:
+                original = mapped_path.read_bytes()
+            except OSError:
+                return False
+
+            payload = gzip.compress(original)
+            self.send_response(http.HTTPStatus.OK)
+            self.send_header("Content-type", self.guess_type(str(mapped_path)))
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(payload)
+            return True
+
+        def _cache_control_header(self) -> str | None:
+            if self.command not in {"GET", "HEAD"}:
+                return None
+
+            path = self.path.split("?", 1)[0]
+            if path.startswith("/api/"):
+                return None
+
+            ext = Path(path).suffix.lower()
+            if ext == ".html":
+                return "public, max-age=60"
+
+            long_lived = {
+                ".js",
+                ".css",
+                ".json",
+                ".parquet",
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".svg",
+                ".ico",
+                ".txt",
+                ".csv",
+                ".wasm",
+            }
+            if ext in long_lived:
+                return "public, max-age=604800, immutable"
+
+            return "public, max-age=300"
+
+        def end_headers(self) -> None:  # type: ignore[override]
+            cache_control = self._cache_control_header()
+            if cache_control:
+                existing = any(b"Cache-Control" in header for header in self._headers_buffer)
+                if not existing:
+                    self.send_header("Cache-Control", cache_control)
+            if self.protocol_version >= "HTTP/1.1" and not self.close_connection:
+                has_conn = any(b"Connection" in header for header in self._headers_buffer)
+                if not has_conn:
+                    self.send_header("Connection", "keep-alive")
+            super().end_headers()
+
         def do_POST(self) -> None:
             if self.path == "/api/forms/submit":
                 self._handle_form_submit()
@@ -397,6 +504,16 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 self._handle_update_password()
                 return
             super().do_POST()  # type: ignore[misc]
+
+        def do_HEAD(self) -> None:  # type: ignore[override]
+            if self._maybe_send_gzip():
+                return
+            super().do_HEAD()
+
+        def do_GET(self) -> None:  # type: ignore[override]
+            if self._maybe_send_gzip():
+                return
+            super().do_GET()
 
         def _handle_form_submit(self) -> None:
             ctype = self.headers.get("Content-Type", "")

@@ -1,17 +1,74 @@
 from __future__ import annotations
 
+import email.utils
+import gzip
+import http.client
+import http.server
 import json
+import socket
 import sys
+import threading
+import time
+from http import HTTPStatus
 from pathlib import Path
 
+import duckdb
 import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from ducksite import js_assets
-from ducksite.builder import build_project
+from ducksite import demo_init_fake_parquet, js_assets
+from ducksite.builder import build_project, serve_project
 from ducksite.config import FileSourceConfig, ProjectConfig
+from ducksite.init_project import init_demo_project, init_project
+from ducksite.sternum import AssetPath, Scheme
 from ducksite.symlinks import build_symlinks
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return int(s.getsockname()[1])
+
+
+def _start_server(root: Path, port: int, monkeypatch: pytest.MonkeyPatch, request_log: list) -> None:
+    def log_message(self: http.server.SimpleHTTPRequestHandler, format: str, *args: object) -> None:  # type: ignore[override]
+        request_log.append(
+            {
+                "method": self.command,
+                "path": self.path,
+                "range": self.headers.get("Range"),
+                "if_modified_since": self.headers.get("If-Modified-Since"),
+            }
+        )
+
+    monkeypatch.setattr(http.server.SimpleHTTPRequestHandler, "log_message", log_message)
+
+    t = threading.Thread(target=serve_project, args=(root, port, "builtin"), daemon=True)
+    t.start()
+    time.sleep(1.0)
+
+
+def _stub_echarts(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_download(url: str, dest: Path) -> None:  # noqa: ARG001
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("// stub echarts", encoding="utf-8")
+
+    monkeypatch.setattr(js_assets, "_download_with_ssl_bypass", fake_download)
+
+
+def _connect_with_httpfs_or_skip():
+    con = duckdb.connect()
+    try:
+        try:
+            con.execute("LOAD httpfs")
+        except duckdb.IOException:
+            con.execute("INSTALL httpfs")
+            con.execute("LOAD httpfs")
+    except duckdb.IOException:
+        con.close()
+        pytest.skip("httpfs extension unavailable in offline test environment")
+    return con
 
 
 @pytest.fixture
@@ -80,7 +137,7 @@ label: Country
     assert "(current: /section/index.html)" in section_text
 
     sitemap = json.loads((site_root / "sitemap.json").read_text(encoding="utf-8"))
-    assert sitemap["routes"] == ["/index.html", "/section/index.html"]
+    assert sitemap["routes"] == [AssetPath.INDEX.value, f"/section{AssetPath.INDEX.value}"]
 
     data_map = json.loads((site_root / "data_map.json").read_text(encoding="utf-8"))
     assert data_map == {}
@@ -125,18 +182,7 @@ def test_symlinks_map_upstream_files(tmp_path: Path) -> None:
 
 
 def test_serve_project_unknown_form_returns_400(tmp_path, monkeypatch):
-    from ducksite.builder import serve_project
-    from ducksite.init_project import init_project
-    import threading
-    import time
-    import http.client
-    from ducksite import js_assets
-
-    def fake_download(url: str, dest: Path) -> None:  # noqa: ARG001
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("// stub echarts", encoding="utf-8")
-
-    monkeypatch.setattr(js_assets, "_download_with_ssl_bypass", fake_download)
+    _stub_echarts(monkeypatch)
 
     init_project(tmp_path)
 
@@ -158,3 +204,226 @@ def test_serve_project_unknown_form_returns_400(tmp_path, monkeypatch):
 
     assert resp.status == 400
     assert "unknown form" in body
+
+
+def test_range_requests_return_not_modified(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+    build_project(tmp_path)
+
+    request_log: list = []
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log)
+
+    sample = tmp_path / "static" / "sample.txt"
+    sample.write_text("0123456789", encoding="utf-8")
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request("GET", "/sample.txt")
+    resp = conn.getresponse()
+    last_modified = resp.getheader("Last-Modified")
+    if last_modified is None:
+        last_modified = email.utils.formatdate(sample.stat().st_mtime, usegmt=True)
+    resp.read()
+    conn.close()
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request(
+        "GET",
+        "/sample.txt",
+        headers={"Range": "bytes=0-4", "If-Modified-Since": last_modified},
+    )
+    resp2 = conn.getresponse()
+    body = resp2.read()
+    conn.close()
+
+    assert resp2.status == HTTPStatus.NOT_MODIFIED
+    assert body == b""
+
+
+def test_duckdb_http_query_uses_range_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+    build_project(tmp_path)
+
+    request_log: list = []
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log)
+
+    data_dir = tmp_path / "static" / "data" / "demo"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = data_dir / "sample.parquet"
+
+    con = duckdb.connect()
+    con.execute(f"COPY (SELECT i AS id FROM range(3) t(i)) TO '{parquet_path}' (FORMAT PARQUET)")
+    con.close()
+
+    url = f"{Scheme.HTTP.value}://localhost:{port}{AssetPath.DEMO_DATA.value}/sample.parquet"
+    client = _connect_with_httpfs_or_skip()
+    client.execute("SET enable_http_metadata_cache=true")
+    client.execute(f"SELECT count(*) FROM read_parquet('{url}')")
+    client.fetchall()
+    client.execute(f"SELECT sum(id) FROM read_parquet('{url}')")
+    client.fetchall()
+    client.close()
+
+    assert any(entry.get("range") for entry in request_log)
+
+
+def test_builtin_server_uses_http_11_keep_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+    content = tmp_path / "content"
+    content.mkdir(parents=True, exist_ok=True)
+    (content / "index.md").write_text("hello", encoding="utf-8")
+    build_project(tmp_path)
+
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log=[])
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request("GET", AssetPath.INDEX.value, headers={"Connection": "keep-alive"})
+    resp = conn.getresponse()
+    resp.read()
+
+    assert resp.version == 11
+    assert resp.will_close is False
+
+    first_sock = conn.sock
+
+    conn.request("GET", AssetPath.CONTRACT_JS.value, headers={"Connection": "keep-alive"})
+    resp2 = conn.getresponse()
+    body2 = resp2.read()
+
+    assert resp2.status == 200
+    assert body2
+    assert conn.sock is first_sock
+
+    conn.close()
+
+
+def test_httpfs_metadata_cache_limits_head_requests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+    build_project(tmp_path)
+
+    request_log: list = []
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log)
+
+    data_dir = tmp_path / "static" / "data" / "demo"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = data_dir / "head_sample.parquet"
+
+    con = duckdb.connect()
+    con.execute(
+        f"COPY (SELECT i AS id FROM range(5) t(i)) TO '{parquet_path}' (FORMAT PARQUET)"
+    )
+    con.close()
+
+    url = f"{Scheme.HTTP.value}://localhost:{port}{AssetPath.DEMO_DATA.value}/head_sample.parquet"
+    client = _connect_with_httpfs_or_skip()
+    client.execute("SET enable_http_metadata_cache=true")
+
+    for _ in range(2):
+        client.execute(f"SELECT sum(id) FROM read_parquet('{url}')")
+        client.fetchall()
+
+    client.close()
+
+    head_requests = [entry for entry in request_log if entry.get("method") == "HEAD"]
+    assert len(head_requests) <= 1
+
+
+def test_server_sets_cache_headers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+    build_project(tmp_path)
+
+    request_log: list = []
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log)
+
+    asset = tmp_path / "static" / "asset.txt"
+    asset.write_text("cache me", encoding="utf-8")
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request("GET", "/asset.txt")
+    resp = conn.getresponse()
+    cache_control = resp.getheader("Cache-Control")
+    age = resp.getheader("Age")
+    resp.read()
+    conn.close()
+
+    assert cache_control == "public, max-age=604800, immutable"
+    assert age is None
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request("GET", AssetPath.INDEX.value)
+    resp = conn.getresponse()
+    cache_html = resp.getheader("Cache-Control")
+    resp.read()
+    conn.close()
+
+    assert cache_html == "public, max-age=60"
+
+
+def test_server_serves_gzip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+    build_project(tmp_path)
+
+    request_log: list = []
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log)
+
+    asset = tmp_path / "static" / "asset.txt"
+    asset.write_text("cache me", encoding="utf-8")
+
+    conn = http.client.HTTPConnection("localhost", port, timeout=5)
+    conn.request("GET", "/asset.txt", headers={"Accept-Encoding": "gzip"})
+    resp = conn.getresponse()
+    body = resp.read()
+    conn.close()
+
+    assert resp.getheader("Content-Encoding") == "gzip"
+    assert resp.getheader("Vary") == "Accept-Encoding"
+    assert resp.getheader("Cache-Control") == "public, max-age=604800, immutable"
+    assert gzip.decompress(body) == b"cache me"
+
+
+def test_demo_parquet_queries_run_quickly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stub_echarts(monkeypatch)
+    monkeypatch.setattr(
+        demo_init_fake_parquet, "_download_nytaxi_parquet", lambda dest: False
+    )
+
+    init_demo_project(tmp_path)
+    build_project(tmp_path)
+
+    request_log: list = []
+    port = _find_free_port()
+    _start_server(tmp_path, port, monkeypatch, request_log)
+
+    client = _connect_with_httpfs_or_skip()
+    client.execute("SET enable_http_metadata_cache=true")
+
+    base = f"{Scheme.HTTP.value}://localhost:{port}{AssetPath.DEMO_DATA.value}"
+    start = time.perf_counter()
+    totals = []
+    for name in ("demo-A", "demo-B", "demo-C"):
+        client.execute(f"SELECT sum(value) FROM read_parquet('{base}/{name}.parquet')")
+        totals.append(client.fetchone()[0])
+    duration = time.perf_counter() - start
+    client.close()
+
+    head_requests = [entry for entry in request_log if entry.get("method") == "HEAD"]
+    assert duration < 5.0
+    assert len(head_requests) <= 3
+    assert all(total is not None for total in totals)
