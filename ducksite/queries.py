@@ -484,7 +484,22 @@ def build_file_source_queries(
             if predicate_template is None:
                 predicate_template = f"{expr} = ?"
 
+            placeholder_count = predicate_template.count("?")
+
             for v in values:
+                if placeholder_count > 1:
+                    if isinstance(v, (list, tuple)):
+                        value_arity = len(v)
+                    else:
+                        value_arity = 1
+
+                    if value_arity != placeholder_count:
+                        # Skip sampled scalars when the template expects
+                        # multiple values; seeded tuples from
+                        # template_values_sql/template_values will still be
+                        # processed.
+                        continue
+
                 # 1) Build the per-value predicate (row filter)
                 predicate = _format_predicate(predicate_template, v)
 
