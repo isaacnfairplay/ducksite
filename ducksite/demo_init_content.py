@@ -33,6 +33,7 @@ def _init_root_page(root: Path) -> None:
             - [Derived templated demo](/derived_filters/index.html)
             - [Models demo](/models/index.html)
             - [Template models demo](/template/index.html)
+            - [Hierarchy endpoints demo](/hierarchy_window/index.html)
             - [Chart gallery](/gallery/index.html)
             - [Forms demo](/forms/index.html)
             """
@@ -408,6 +409,126 @@ def _init_derived_filters_page(root: Path) -> None:
         ],
     )
     write_if_missing(df_md, content)
+
+
+def _init_hierarchy_page(root: Path) -> None:
+    """
+    Create a hierarchy demo page at:
+
+      /content/hierarchy/index.md
+
+    This demonstrates combining day/month/year Parquet rolls into a single
+    logical source using the hierarchy file-source format.
+    """
+
+    hier_md = root / "content" / "hierarchy" / "index.md"
+    intro = textwrap.dedent(
+        """
+        The hierarchy demo shows how one logical source can stitch together
+        multiple physical roots. Here we expose recent rows from daily files,
+        older rows from monthly files, and archives from yearly files.
+        """
+    )
+
+    content = _render_page(
+        "# Hierarchy Demo (day/month/year rollups)",
+        intro,
+        [
+            (
+                "sql",
+                "hierarchy_all",
+                textwrap.dedent(
+                    """
+                    SELECT category, period, value
+                    FROM demo_hierarchy
+                    ORDER BY value;
+                    """
+                ),
+            ),
+            (
+                "echart",
+                "hierarchy_chart",
+                textwrap.dedent(
+                    """
+                    data_query: hierarchy_all
+                    type: bar
+                    x: category
+                    y: value
+                    title: "Hierarchy source (daily + monthly + yearly)"
+                    """
+                ),
+            ),
+            (
+                "grid",
+                "cols=12 gap=md",
+                "| hierarchy_chart:8 | hierarchy_all:4 |",
+            ),
+        ],
+    )
+    write_if_missing(hier_md, content)
+
+
+def _init_hierarchy_window_page(root: Path) -> None:
+    """
+    Create an advanced hierarchy demo page at:
+
+      /content/hierarchy_window/index.md
+
+    This highlights before/after endpoints around a templated
+    day/month/year rollup.
+    """
+
+    window_md = root / "content" / "hierarchy_window" / "index.md"
+    intro = textwrap.dedent(
+        """
+        This page layers higher-fidelity day endpoints around a
+        month/year rollup. It also uses templated naming to build
+        per-region/per-date variants while keeping all levels stitched
+        together in one logical view.
+        """
+    )
+
+    content = _render_page(
+        "# Hierarchy Demo (before/after endpoints + templating)",
+        intro,
+        [
+            (
+                "sql",
+                "hierarchy_window_all",
+                textwrap.dedent(
+                    """
+                    SELECT
+                      region,
+                      strftime(max_day, '%Y-%m-%d') AS max_day,
+                      period,
+                      value
+                    FROM demo_hierarchy_window
+                    ORDER BY max_day DESC, period;
+                    """
+                ),
+            ),
+            (
+                "echart",
+                "hierarchy_window_chart",
+                textwrap.dedent(
+                    """
+                    data_query: hierarchy_window_all
+                    type: bar
+                    x: period
+                    y: value
+                    series: region
+                    title: "Templated hierarchy with before/after day windows"
+                    """
+                ),
+            ),
+            (
+                "grid",
+                "cols=12 gap=md",
+                "| hierarchy_window_chart:7 | hierarchy_window_all:5 |",
+            ),
+        ],
+    )
+    write_if_missing(window_md, content)
 
 
 def _init_models_page(root: Path) -> None:
@@ -810,6 +931,8 @@ def init_demo_content(root: Path) -> None:
     _init_filters_page(root)
     _init_cross_filters_page(root)
     _init_derived_filters_page(root)
+    _init_hierarchy_page(root)
+    _init_hierarchy_window_page(root)
     _init_models_page(root)
     _init_template_page(root)
     _init_forms_page(root)

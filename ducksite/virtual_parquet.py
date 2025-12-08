@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 from types import ModuleType
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator
 from contextlib import contextmanager
 
 from .config import ProjectConfig
@@ -79,7 +79,7 @@ def _import_plugin_module(module_ref: str, project_root: Path) -> ModuleType:
 
 
 @contextmanager
-def _prepend_sys_path(path: str):
+def _prepend_sys_path(path: str) -> Iterator[None]:
     sys_path_was = list(sys.path)
     if path not in sys.path:
         sys.path.insert(0, path)

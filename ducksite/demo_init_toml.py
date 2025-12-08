@@ -98,6 +98,68 @@ def init_demo_toml(root: Path) -> None:
     except ValueError:
         print(f"[ducksite:demo] {toml_path} already contains plugin file source, skipping.")
 
+    hierarchy_entry = {
+        "name": "demo_hierarchy",
+        "template_name": "demo_hierarchy_[category]",
+        "row_filter_template": "category = ?",
+        "hierarchy": [
+            {"pattern": "data/demo_hierarchy/day/*.parquet", "row_filter": "period = 'day'"},
+            {"pattern": "data/demo_hierarchy/month/*.parquet", "row_filter": "period = 'month'"},
+            {"pattern": "data/demo_hierarchy/year/*.parquet", "row_filter": "period = 'year'"},
+        ],
+        "upstream_glob": "${DIR_FAKE}/demo_hierarchy/**/*.parquet",
+    }
+
+    try:
+        rendered = add_file_source_entry(
+            rendered,
+            hierarchy_entry,
+            root,
+            comments=[
+                "ducksite.toml - dummy config for local testing",
+                "Hierarchy demo combining day/month/year rollups into one source.",
+            ],
+        )
+    except ValueError:
+        print(
+            f"[ducksite:demo] {toml_path} already contains hierarchy file source, skipping."
+        )
+
+    hierarchy_window_entry = {
+        "name": "demo_hierarchy_window",
+        "template_name": "demo_hierarchy_window_[concat(region, '_', strftime(max_day, '%Y-%m-%d'))]",
+        "row_filter": "active = true",
+        "row_filter_template": "concat(region, '_', strftime(max_day, '%Y-%m-%d')) = ?",
+        "template_values": ["na_2024-12-05"],
+        "hierarchy_before": [
+            {"pattern": "data/demo_hierarchy_window/day_start/*.parquet", "row_filter": "period = 'edge-start'"}
+        ],
+        "hierarchy": [
+            {"pattern": "data/demo_hierarchy_window/day/*.parquet", "row_filter": "period = 'day'"},
+            {"pattern": "data/demo_hierarchy_window/month/*.parquet", "row_filter": "period = 'month'"},
+            {"pattern": "data/demo_hierarchy_window/year/*.parquet", "row_filter": "period = 'year'"},
+        ],
+        "hierarchy_after": [
+            {"pattern": "data/demo_hierarchy_window/day_end/*.parquet", "row_filter": "period = 'edge-end'"}
+        ],
+        "upstream_glob": "${DIR_FAKE}/demo_hierarchy_window/**/*.parquet",
+    }
+
+    try:
+        rendered = add_file_source_entry(
+            rendered,
+            hierarchy_window_entry,
+            root,
+            comments=[
+                "ducksite.toml - dummy config for local testing",
+                "Hierarchy demo with before/after windows, templated by region and date.",
+            ],
+        )
+    except ValueError:
+        print(
+            f"[ducksite:demo] {toml_path} already contains hierarchy window file source, skipping."
+        )
+
     ensure_dir(toml_path.parent)
     toml_path.write_text(rendered, encoding="utf-8")
     print(f"[ducksite:demo] wrote {toml_path}")

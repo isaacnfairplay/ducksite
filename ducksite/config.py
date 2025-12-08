@@ -44,6 +44,9 @@ class FileSourceConfig:
     union_mode: str = "union_all_by_name"
     time_window: Optional[Dict[str, Any]] = None
     plugin: Optional[str] = None
+    hierarchy_before: List["FileSourceHierarchy"] = field(default_factory=list)
+    hierarchy: List["FileSourceHierarchy"] = field(default_factory=list)
+    hierarchy_after: List["FileSourceHierarchy"] = field(default_factory=list)
 
     # Optional static row filter applied to *all* rows for this file source.
     # When set, it is ANDed into both the base file-source view and any
@@ -59,9 +62,9 @@ class FileSourceConfig:
     # where <expr> is the SQL expression extracted from the [ ... ] segment
     # in template_name.
     #
-    # If row_filter_template is provided, it must contain a single "?"
-    # placeholder that will be replaced with a correctly quoted SQL literal
-    # representing the distinct value seen for that expression.
+    # If row_filter_template is provided, it must contain one or more "?"
+    # placeholders that will be replaced with correctly quoted SQL literals
+    # representing the distinct value(s) seen for that expression.
     #
     # Example:
     #   template_name       = "barcode_prefix_[left(Barcode,10)]"
@@ -73,9 +76,29 @@ class FileSourceConfig:
     # This predicate is ANDed with row_filter (if present).
     row_filter_template: Optional[str] = None
 
+    # Optional explicit values to materialise templated views even when
+    # sampling data is not possible (for example, date partitions written
+    # daily but not yet present in the build environment).
+    template_values: List[Any] = field(default_factory=list)
+
+    # Optional DuckDB SQL that returns rows whose values seed templated views.
+    #
+    # This is useful when the templated expression depends on multi-column
+    # combinations (for example, region + date) or when the build needs a
+    # reproducible list of values regardless of what is currently reachable in
+    # storage. The query can return multiple columns; each row is treated as a
+    # tuple of values that will be substituted into the row_filter_template.
+    template_values_sql: Optional[str] = None
+
     # Behaviour when no matching Parquet files are found for this source.
     # Currently only "error" is recognised.
     on_empty: str = "error"
+
+
+@dataclass
+class FileSourceHierarchy:
+    pattern: str
+    row_filter: Optional[str] = None
 
 
 @dataclass
@@ -116,6 +139,19 @@ def load_project_config(root: Path) -> ProjectConfig:
 
     dirs: Dict[str, str] = data.get("dirs", {}) or {}
 
+    def _parse_hierarchy(levels: List[Dict[str, Any]] | None) -> List[FileSourceHierarchy]:
+        parsed: List[FileSourceHierarchy] = []
+        for level in levels or []:
+            if not isinstance(level, dict):
+                raise ValueError("hierarchy entries must be tables with a pattern")
+            pattern = level.get("pattern")
+            if not pattern:
+                raise ValueError("hierarchy entries must include a pattern")
+            parsed.append(
+                FileSourceHierarchy(pattern=pattern, row_filter=level.get("row_filter"))
+            )
+        return parsed
+
     file_sources_cfg: List[FileSourceConfig] = []
     for fs in data.get("file_sources", []) or []:
         file_sources_cfg.append(
@@ -129,7 +165,12 @@ def load_project_config(root: Path) -> ProjectConfig:
                 time_window=fs.get("time_window"),
                 row_filter=fs.get("row_filter"),
                 row_filter_template=fs.get("row_filter_template"),
+                template_values=fs.get("template_values", []) or [],
+                template_values_sql=fs.get("template_values_sql"),
                 on_empty=fs.get("on_empty", "error"),
+                hierarchy_before=_parse_hierarchy(fs.get("hierarchy_before")),
+                hierarchy=_parse_hierarchy(fs.get("hierarchy")),
+                hierarchy_after=_parse_hierarchy(fs.get("hierarchy_after")),
             )
         )
 
