@@ -166,6 +166,137 @@ def init_demo_fake_parquet(root: Path) -> None:
         except Exception:
             pass
 
+    # --- Hierarchy demo: day/month/year rollups ---
+    hier_root = fake_dir / "demo_hierarchy"
+    day_path = hier_root / "day" / "hier-day.parquet"
+    month_path = hier_root / "month" / "hier-month.parquet"
+    year_path = hier_root / "year" / "hier-year.parquet"
+
+    ensure_dir(day_path.parent)
+    ensure_dir(month_path.parent)
+    ensure_dir(year_path.parent)
+
+    if day_path.exists() and month_path.exists() and year_path.exists():
+        print("[ducksite:init] hierarchy demo parquet already exist, skipping.")
+    else:
+        hier_con = duckdb.connect()
+        try:
+            hier_con.execute(
+                """
+                COPY (
+                  SELECT 'recent'::VARCHAR AS category,
+                         'day'::VARCHAR    AS period,
+                         1::INT            AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(day_path)],
+            )
+            hier_con.execute(
+                """
+                COPY (
+                  SELECT 'older'::VARCHAR AS category,
+                         'month'::VARCHAR AS period,
+                         2::INT           AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(month_path)],
+            )
+            hier_con.execute(
+                """
+                COPY (
+                  SELECT 'archive'::VARCHAR AS category,
+                         'year'::VARCHAR    AS period,
+                         3::INT             AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(year_path)],
+            )
+            print("[ducksite:init] wrote hierarchy demo parquet split across day/month/year")
+        finally:
+            hier_con.close()
+
+    # --- Hierarchy endpoints demo: day/month/year with edge windows ---
+    edge_root = fake_dir / "demo_hierarchy_window"
+    edge_before = edge_root / "day_start" / "hier-edge-start.parquet"
+    edge_day = edge_root / "day" / "hier-edge-day.parquet"
+    edge_month = edge_root / "month" / "hier-edge-month.parquet"
+    edge_year = edge_root / "year" / "hier-edge-year.parquet"
+    edge_after = edge_root / "day_end" / "hier-edge-end.parquet"
+
+    for p in [edge_before, edge_day, edge_month, edge_year, edge_after]:
+        ensure_dir(p.parent)
+
+    if all(p.exists() for p in [edge_before, edge_day, edge_month, edge_year, edge_after]):
+        print("[ducksite:init] hierarchy endpoints demo parquet already exist, skipping.")
+    else:
+        edge_con = duckdb.connect()
+        try:
+            edge_con.execute(
+                """
+                COPY (
+                  SELECT 'na'::VARCHAR AS region,
+                         DATE '2024-12-05' AS max_day,
+                         'edge-start'::VARCHAR AS period,
+                         TRUE AS active,
+                         5::INT AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(edge_before)],
+            )
+            edge_con.execute(
+                """
+                COPY (
+                  SELECT 'na'::VARCHAR AS region,
+                         DATE '2024-12-05' AS max_day,
+                         'day'::VARCHAR AS period,
+                         TRUE AS active,
+                         7::INT AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(edge_day)],
+            )
+            edge_con.execute(
+                """
+                COPY (
+                  SELECT 'na'::VARCHAR AS region,
+                         DATE '2024-11-30' AS max_day,
+                         'month'::VARCHAR AS period,
+                         TRUE AS active,
+                         11::INT AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(edge_month)],
+            )
+            edge_con.execute(
+                """
+                COPY (
+                  SELECT 'na'::VARCHAR AS region,
+                         DATE '2023-12-31' AS max_day,
+                         'year'::VARCHAR AS period,
+                         TRUE AS active,
+                         19::INT AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(edge_year)],
+            )
+            edge_con.execute(
+                """
+                COPY (
+                  SELECT 'na'::VARCHAR AS region,
+                         DATE '2024-12-05' AS max_day,
+                         'edge-end'::VARCHAR AS period,
+                         TRUE AS active,
+                         23::INT AS value
+                ) TO ? (FORMAT 'parquet');
+                """,
+                [str(edge_after)],
+            )
+            print(
+                "[ducksite:init] wrote hierarchy endpoints demo parquet with before/after day windows"
+            )
+        finally:
+            edge_con.close()
+
     # --- NYTaxi: prefer real download, otherwise fallback to tiny sample ---
 
     if nytaxi_real_path.exists() or nytaxi_sample_path.exists():

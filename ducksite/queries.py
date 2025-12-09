@@ -5,10 +5,11 @@ from typing import Dict, List, Optional, Any
 import glob
 import re
 import json
+import fnmatch
 
 import duckdb
 
-from .config import ProjectConfig
+from .config import FileSourceHierarchy, ProjectConfig
 from .utils import sha256_text, sha256_list
 
 
@@ -99,6 +100,34 @@ def _sql_literal(value: Any) -> str:
     s = str(value)
     s = s.replace("'", "''")
     return f"'{s}'"
+
+
+def _format_predicate(template: str, value: Any) -> str:
+    """
+    Replace '?' placeholders in template with SQL literals for value.
+
+    Supports scalar values (single '?') and tuples/lists when multiple
+    placeholders are present.
+    """
+
+    if isinstance(value, (list, tuple)):
+        values = list(value)
+    else:
+        values = [value]
+
+    placeholder_count = template.count("?")
+    if placeholder_count == 0:
+        return template
+    if placeholder_count != len(values):
+        raise RuntimeError(
+            "row_filter_template expects "
+            f"{placeholder_count} values but {len(values)} were provided"
+        )
+
+    out = template
+    for v in values:
+        out = out.replace("?", _sql_literal(v), 1)
+    return out
 
 
 def _slug_value(value: Any) -> str:
@@ -282,28 +311,50 @@ def build_file_source_queries(
     row_filters = _load_row_filters(site_root)
 
     local_con: Optional[duckdb.DuckDBPyConnection] = None
+    def combine_predicates(base: str, extra: Optional[str]) -> str:
+        if not extra or extra.strip().upper() == "TRUE":
+            return base
+        if base == "TRUE":
+            return extra
+        return f"({base}) AND ({extra})"
+
     try:
         for fs in cfg.file_sources:
-            rel_paths: List[str] = []
+            hierarchy_levels = (
+                fs.hierarchy_before
+                + (fs.hierarchy or [FileSourceHierarchy(pattern=fs.pattern)])
+                + fs.hierarchy_after
+            )
+            base_where = fs.row_filter or "TRUE"
 
-            # Prefer virtual map when we know the logical root name.
-            if data_map and fs.name:
-                prefix = f"data/{fs.name}/"
-                for key in data_map.keys():
-                    if key.startswith(prefix):
-                        rel_paths.append(key)
+            level_entries: List[dict[str, Any]] = []
+            for level in hierarchy_levels:
+                rel_paths: List[str] = []
 
-            # Legacy fallback: pattern-based glob under site_root.
-            if not rel_paths:
-                rel_paths = _expand_file_pattern(site_root, fs.pattern)
+                if data_map and fs.name:
+                    prefix = f"data/{fs.name}/"
+                    for key in data_map.keys():
+                        if key.startswith(prefix) and fnmatch.fnmatch(key, level.pattern):
+                            rel_paths.append(key)
 
-            if not rel_paths:
-                # No files for this file_source; skip it.
+                if not rel_paths:
+                    rel_paths = _expand_file_pattern(site_root, level.pattern)
+
+                if not rel_paths:
+                    continue
+
+                level_entries.append(
+                    {
+                        "paths": rel_paths,
+                        "predicate": combine_predicates(base_where, level.row_filter),
+                    }
+                )
+
+            if not level_entries:
                 continue
 
             # HTTP-visible paths for final SQL.
-            http_paths = list(rel_paths)
-            base_where = fs.row_filter or "TRUE"
+            http_paths = [p for entry in level_entries for p in entry["paths"]]
 
             def select_with_filters(paths: List[str], predicate: str) -> str:
                 filtered = [(p, row_filters.get(p)) for p in paths]
@@ -322,7 +373,11 @@ def build_file_source_queries(
 
             # Base (non-templated) file-source view.
             if fs.name:
-                sql = select_with_filters(http_paths, base_where)
+                selects = [
+                    select_with_filters(entry["paths"], entry["predicate"])
+                    for entry in level_entries
+                ]
+                sql = " UNION ALL ".join(selects)
                 result[fs.name] = NamedQuery(
                     name=fs.name,
                     sql=sql,
@@ -344,13 +399,13 @@ def build_file_source_queries(
 
             # For DISTINCT sampling, prefer physical paths if we have
             # a virtual data map; otherwise use the HTTP paths directly.
-            if data_map and fs.name:
-                physical_paths = [
-                    data_map[key] for key in http_paths if key in data_map
-                ]
-            else:
-                # Translate HTTP paths into filesystem paths under site_root.
-                physical_paths = [str(site_root / p) for p in http_paths]
+            def level_physical_paths(level_paths: List[str]) -> List[str]:
+                if data_map and fs.name:
+                    return [data_map[key] for key in level_paths if key in data_map]
+                return [str(site_root / p) for p in level_paths]
+
+            physical_groups = [level_physical_paths(entry["paths"]) for entry in level_entries]
+            physical_paths = [p for group in physical_groups for p in group]
 
             if not physical_paths:
                 print(
@@ -358,8 +413,6 @@ def build_file_source_queries(
                     f"file_source '{fs.name or fs.pattern}'; skipping template expansion."
                 )
                 continue
-
-            explain_read_expr = _build_read_parquet_expr(physical_paths)
 
             # Ensure relative file paths resolve correctly for EXPLAIN.
             safe_root = site_root.as_posix().replace("'", "''")
@@ -372,10 +425,23 @@ def build_file_source_queries(
                     f"Invalid template_name for file source '{fs.name or fs.pattern}': {e}"
                 ) from e
 
-            distinct_sql = (
-                f"SELECT DISTINCT {expr} AS v FROM {explain_read_expr} "
-                f"WHERE {base_where} ORDER BY v"
-            )
+            distinct_parts: List[str] = []
+            for paths, predicate in zip(physical_groups, [e["predicate"] for e in level_entries]):
+                if not paths:
+                    continue
+                explain_read_expr = _build_read_parquet_expr(paths)
+                distinct_parts.append(
+                    f"SELECT DISTINCT {expr} AS v FROM {explain_read_expr} WHERE {predicate}"
+                )
+
+            if not distinct_parts:
+                continue
+
+            if len(distinct_parts) == 1:
+                distinct_sql = f"{distinct_parts[0]} ORDER BY v"
+            else:
+                union_parts = " UNION ALL ".join(distinct_parts)
+                distinct_sql = f"SELECT DISTINCT v FROM ({union_parts}) AS t ORDER BY v"
 
             try:
                 rows = active_con.execute(distinct_sql).fetchall()
@@ -390,22 +456,52 @@ def build_file_source_queries(
                 )
                 continue
 
-            if not rows:
+            values: List[Any] = [v for (v,) in rows if v is not None]
+
+            if fs.template_values_sql:
+                try:
+                    seeded_rows = active_con.execute(fs.template_values_sql).fetchall()
+                except duckdb.Error as err:
+                    raise RuntimeError(
+                        f"Failed to execute template_values_sql for "
+                        f"file source '{fs.name or fs.pattern}': {err}"
+                    ) from err
+                for row in seeded_rows:
+                    if len(row) == 1:
+                        values.append(row[0])
+                    else:
+                        values.append(tuple(row))
+
+            if fs.template_values:
+                values = [*values, *fs.template_values]
+
+            values = list(dict.fromkeys(values))
+
+            if not values:
                 continue
 
             predicate_template = fs.row_filter_template
             if predicate_template is None:
                 predicate_template = f"{expr} = ?"
 
-            for (v,) in rows:
-                if v is None:
-                    continue
+            placeholder_count = predicate_template.count("?")
+
+            for v in values:
+                if placeholder_count > 1:
+                    if isinstance(v, (list, tuple)):
+                        value_arity = len(v)
+                    else:
+                        value_arity = 1
+
+                    if value_arity != placeholder_count:
+                        # Skip sampled scalars when the template expects
+                        # multiple values; seeded tuples from
+                        # template_values_sql/template_values will still be
+                        # processed.
+                        continue
 
                 # 1) Build the per-value predicate (row filter)
-                lit = _sql_literal(v)
-                predicate = predicate_template.replace("?", lit)
-                if fs.row_filter:
-                    predicate = f"({base_where}) AND ({predicate})"
+                predicate = _format_predicate(predicate_template, v)
 
                 # 2) Parameterise the file list by **prefix** when possible.
                 #
@@ -414,18 +510,21 @@ def build_file_source_queries(
                 #
                 #    So for v = 'A' we prefer files whose token startswith 'A'.
                 v_str = str(v)
-                value_paths: List[str] = []
-                for p in http_paths:
-                    token = _logical_prefix_token(p)
-                    if token.startswith(v_str):
-                        value_paths.append(p)
+                view_selects: List[str] = []
+                for entry in level_entries:
+                    level_paths = []
+                    for p in entry["paths"]:
+                        token = _logical_prefix_token(p)
+                        if token.startswith(v_str):
+                            level_paths.append(p)
 
-                if not value_paths:
-                    # Fallback: if we can't infer a prefix-based subset, just
-                    # use the full list so the feature degrades gracefully.
-                    value_paths = http_paths
+                    if not level_paths:
+                        level_paths = entry["paths"]
 
-                view_sql = select_with_filters(value_paths, predicate)
+                    combined_pred = combine_predicates(entry["predicate"], predicate)
+                    view_selects.append(select_with_filters(level_paths, combined_pred))
+
+                view_sql = " UNION ALL ".join(view_selects)
                 suffix = _slug_value(v)
                 if not base_name:
                     view_name = suffix

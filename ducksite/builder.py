@@ -357,6 +357,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
 
     class DucksiteRequestHandler(http.server.SimpleHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        _headers_buffer: list[bytes]
 
         """
         Custom HTTP handler that implements *virtual symlinks* for /data/...
@@ -492,7 +493,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
 
             return "public, max-age=300"
 
-        def end_headers(self) -> None:  # type: ignore[override]
+        def end_headers(self) -> None:
             cache_control = self._cache_control_header()
             if cache_control:
                 existing = any(b"Cache-Control" in header for header in self._headers_buffer)
@@ -513,12 +514,12 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
                 return
             super().do_POST()  # type: ignore[misc]
 
-        def do_HEAD(self) -> None:  # type: ignore[override]
+        def do_HEAD(self) -> None:
             if self._maybe_send_gzip():
                 return
             super().do_HEAD()
 
-        def do_GET(self) -> None:  # type: ignore[override]
+        def do_GET(self) -> None:
             if self._maybe_send_gzip():
                 return
             super().do_GET()

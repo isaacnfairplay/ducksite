@@ -45,10 +45,65 @@ row_filter_template = "category = ?"
 ```
 This setup mirrors every `fake_upstream/demo-*.parquet` file into the generated `static/data/demo/` namespace and automatically creates per-category templated views such as `demo_A` or `demo_B`. Ducksite no longer writes operating-system symlinks or copies of the data; it only records the real file locations in a virtual map that the HTTP server streams directly.
 
+### Multi-level file sources (temporal or other rollups)
+Add a `hierarchy` array when you want one logical source to stitch together multiple folder levels. The common case is temporal (day → month → year), but any ordered rollup works the same way:
+```toml
+[[file_sources]]
+name = "orders"
+template_name = "orders_[concat(region, '_', strftime(max_day, '%Y-%m-%d'))]"
+row_filter = "active = true" # applied to every level
+row_filter_template = "concat(region, '_', strftime(max_day, '%Y-%m-%d')) = ?" # appended for each templated view
+template_values = ["emea_2024-12-05"] # seed per-value views when sampling is not possible
+template_values_sql = """
+  SELECT region, DATE '2024-12-06' AS max_day
+  FROM (VALUES ('emea'), ('na')) t(region)
+""" # optional: multi-column seed rows evaluated in DuckDB
+hierarchy_before = [
+  { pattern = "data/orders/day/*.parquet", row_filter = "period = 'edge-day'" },
+]
+hierarchy = [
+  { pattern = "data/orders/day/*.parquet",   row_filter = "period = 'day'" },
+  { pattern = "data/orders/month/*.parquet", row_filter = "period = 'month'" },
+  { pattern = "data/orders/year/*.parquet",  row_filter = "period = 'year'" },
+]
+hierarchy_after = [
+  { pattern = "data/orders/day/*.parquet", row_filter = "period = 'edge-day'" },
+]
+```
+- Ducksite unions every level in order and ANDs the `row_filter` from the file source with the `row_filter` on each level.
+- When `template_name` is set, Ducksite samples distinct values across all levels (via DuckDB) and emits per-value views whose predicates include both the base `row_filter` and the per-level filter.
+- Provide `template_values` to force specific templated views to materialise even when build-time sampling cannot reach the data (for example, creating a view for a given date while the fresh daily file has not been uploaded yet, or pre-seeding a particular region/date pair). If you need a repeatable list of combinations, set `template_values_sql` to a DuckDB query that returns one or more columns; each row seeds a templated view and is substituted into the `row_filter_template` in order.
+- Use `hierarchy_before` or `hierarchy_after` when you want higher-fidelity endpoints around a temporal rollup (e.g., day files for the first and last weeks) while keeping coarser month/year files in the middle of the list.
+- If you omit `hierarchy`, Ducksite falls back to the legacy `pattern` field so existing projects keep working unchanged.
+
+The hierarchy itself is agnostic to time: you can point it at fidelity levels (raw → cleaned → curated) or region rollups (store → country → global) as long as the list is ordered from most-granular to most-aggregated. For temporal data, the naming makes that ordering obvious; for other uses, consider documenting the level semantics alongside the config to avoid confusion.
+
+This format helps you avoid scanning thousands of tiny day files for historical data. A representative benchmark on a small cloud VM with ~2.2 million rows spread across 731 day files showed that a naive "all days" scan took ~68 ms, while a hierarchical read that used December day files + month aggregates for the rest of 2024 + a single yearly file for 2023 returned the same result in ~7 ms (about 10x faster) because far fewer files were touched.
+
+For smaller windows, the difference still shows up: a 35-day window that overlapped two months dropped from ~19 ms (35 day files) to ~6 ms (two monthly files plus five recent day files) on the same VM.
+
+```mermaid
+flowchart TD
+  C[ducksite.toml with template_name<br/>and hierarchy levels] --> Q[build_file_source_queries()<br/>expands patterns]
+  Q --> S[DuckDB DISTINCT sampler<br/>+ template_values seeding]
+  S --> V[NamedQuery entries:<br/>base view + per-value templated views]
+  V --> G[build_project()<br/>compile_query(...)]
+  G --> W[static/sql/_global/*.sql<br/>and per-page SQL files]
+  W --> M[static/sql/_manifest.json<br/>lists query kinds and deps]
+  M --> B[Browser SQL editor fetches manifest]<br/>
+  W --> H[HTTP server streams Parquet via virtual data map]
+```
+
+The demo project ships two hierarchy pages: one mirrors the simple day/month/year rollup (`/hierarchy/`), and another layers before/after endpoint days around the rollup with templated region/date names (`/hierarchy_window/`).
+
 ### How Ducksite interprets configuration
 - `load_project_config` validates `ducksite.toml`, substitutes `DIR_*` variables inside `upstream_glob`, and prepares paths for the builder.
 - During a build, `build_symlinks` scans each `upstream_glob`, preserves directory structure, and writes a virtual `static/data_map.json` so HTTP requests (and DuckDB’s `read_parquet`) resolve against the real files. Missing matches are allowed and logged.
 - If you omit `file_sources`, Ducksite still builds successfully; only the data map will be empty.
+
+### Virtual hierarchies and plugins
+
+Hierarchical file sources work with both static file maps and plugin-provided data. A plugin can emit the same `data_map.json` entries (or HTTP handlers) that the static builder writes, so templated hierarchy views resolve against virtual or remote storage without copying data locally. If you need to generate the hierarchy list dynamically (for example, using signed URLs per request), implement a plugin that mirrors the structure of `build_file_source_queries`—returning the level patterns, row filters, and template substitutions—and reuse the browser manifest flow to keep compiled SQL in sync.
 
 ## 2. Add SQL query files (`sources_sql/*.sql`)
 
