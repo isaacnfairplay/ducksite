@@ -3,6 +3,7 @@ from typing import Dict, List, Match, Optional, Pattern, Tuple
 from pathlib import Path
 import re
 import json
+import sqlite3
 import duckdb
 
 from .queries import NamedQuery, NetworkMetrics
@@ -64,6 +65,16 @@ def _load_data_map_for_explain(site_root: Path) -> Dict[str, str]:
     Keys: HTTP-visible paths like 'data/demo/demo-data.parquet'
     Values: filesystem paths for DuckDB to see during EXPLAIN.
     """
+    sqlite_path = site_root / "data_map.sqlite"
+    if sqlite_path.exists():
+        try:
+            con = sqlite3.connect(sqlite_path)
+            rows = con.execute("SELECT http_path, physical_path FROM data_map").fetchall()
+            con.close()
+            return {str(k): str(v) for k, v in rows}
+        except sqlite3.Error as e:
+            print(f"[ducksite] WARNING: failed to read {sqlite_path}: {e}")
+
     path = site_root / "data_map.json"
     try:
         text = path.read_text(encoding="utf-8")
