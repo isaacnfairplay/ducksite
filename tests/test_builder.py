@@ -217,6 +217,43 @@ def test_symlinks_skips_rebuild_when_fingerprint_matches(tmp_path: Path) -> None
     assert sqlite_path.exists()
 
 
+def test_symlinks_rebuilds_when_upstream_changes(tmp_path: Path) -> None:
+    upstream = tmp_path / "upstream"
+    (upstream / "cat1").mkdir(parents=True, exist_ok=True)
+    (upstream / "cat1" / "first.parquet").write_text("demo", encoding="utf-8")
+
+    pattern = str(upstream / "cat*" / "*.parquet")
+    cfg = ProjectConfig(
+        root=tmp_path,
+        dirs={},
+        file_sources=[FileSourceConfig(name="demo", upstream_glob=pattern)],
+    )
+
+    build_symlinks(cfg)
+
+    data_map_path = cfg.site_root / "data_map.json"
+    sqlite_path = cfg.site_root / "data_map.sqlite"
+    meta_path = cfg.site_root / "data_map_meta.json"
+
+    first_mtime = data_map_path.stat().st_mtime
+    first_meta = json.loads(meta_path.read_text(encoding="utf-8"))["fingerprint"]
+
+    time.sleep(1.0)
+    (upstream / "cat1" / "second.parquet").write_text("demo2", encoding="utf-8")
+
+    build_symlinks(cfg)
+
+    refreshed = json.loads(data_map_path.read_text(encoding="utf-8"))
+    refreshed_meta = json.loads(meta_path.read_text(encoding="utf-8"))["fingerprint"]
+
+    assert data_map_path.stat().st_mtime > first_mtime
+    assert sqlite_path.exists()
+    assert refreshed_meta != first_meta
+    assert set(refreshed) == {
+        f"data/demo/cat1/{name}" for name in ["first.parquet", "second.parquet"]
+    }
+
+
 def test_serve_project_unknown_form_returns_400(tmp_path, monkeypatch):
     _stub_echarts(monkeypatch)
 

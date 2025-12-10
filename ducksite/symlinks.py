@@ -220,6 +220,36 @@ if __name__ == "__main__":
 def _file_source_fingerprint(cfg: ProjectConfig) -> str:
     payload: list[dict[str, object]] = []
     for fs in cfg.file_sources:
+        upstream_state: list[dict[str, object]] | None = None
+        if fs.upstream_glob:
+            up = Path(fs.upstream_glob)
+            pattern = str(up) if up.is_absolute() else str(cfg.root / up)
+            try:
+                matches = glob.glob(pattern)
+            except OSError:
+                matches = []
+
+            upstream_state = []
+            for src_path_str in matches:
+                src = Path(src_path_str)
+                if not src.is_file():
+                    continue
+
+                try:
+                    stat = src.stat()
+                except OSError:
+                    continue
+
+                upstream_state.append(
+                    {
+                        "path": str(src),
+                        "mtime_ns": stat.st_mtime_ns,
+                        "size": stat.st_size,
+                    }
+                )
+
+            upstream_state.sort(key=lambda item: item["path"])
+
         payload.append(
             {
                 "name": fs.name,
@@ -232,6 +262,7 @@ def _file_source_fingerprint(cfg: ProjectConfig) -> str:
                 "hierarchy_before": [h.__dict__ for h in fs.hierarchy_before],
                 "hierarchy": [h.__dict__ for h in fs.hierarchy],
                 "hierarchy_after": [h.__dict__ for h in fs.hierarchy_after],
+                "upstream_state": upstream_state,
             }
         )
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
