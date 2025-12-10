@@ -220,7 +220,7 @@ if __name__ == "__main__":
 def _file_source_fingerprint(cfg: ProjectConfig) -> str:
     payload: list[dict[str, object]] = []
     for fs in cfg.file_sources:
-        upstream_state: list[dict[str, object]] | None = None
+        upstream_state: list[str] | None = None
         if fs.upstream_glob:
             up = Path(fs.upstream_glob)
             pattern = str(up) if up.is_absolute() else str(cfg.root / up)
@@ -229,26 +229,11 @@ def _file_source_fingerprint(cfg: ProjectConfig) -> str:
             except OSError:
                 matches = []
 
-            upstream_state = []
-            for src_path_str in matches:
-                src = Path(src_path_str)
-                if not src.is_file():
-                    continue
-
-                try:
-                    stat = src.stat()
-                except OSError:
-                    continue
-
-                upstream_state.append(
-                    {
-                        "path": str(src),
-                        "mtime_ns": stat.st_mtime_ns,
-                        "size": stat.st_size,
-                    }
-                )
-
-            upstream_state.sort(key=lambda item: item["path"])
+            upstream_state = sorted(
+                str(Path(src_path_str))
+                for src_path_str in matches
+                if Path(src_path_str).is_file()
+            )
 
         payload.append(
             {
