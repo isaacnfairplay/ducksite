@@ -133,12 +133,21 @@ def load_virtual_parquet_manifest(plugin_ref: str, cfg: ProjectConfig) -> Virtua
     )
 
 
-def write_row_filter_meta(site_root: Path, filters: dict[str, str]) -> None:
-    if not filters:
-        meta_path = site_root / "data_map_meta.json"
+def write_row_filter_meta(
+    site_root: Path, filters: dict[str, str], fingerprint: str | None = None
+) -> None:
+    meta: dict[str, object] = {}
+    if filters:
+        meta["row_filters"] = filters
+    if fingerprint:
+        meta["fingerprint"] = fingerprint
+
+    meta_path = site_root / "data_map_meta.json"
+
+    if not meta:
         if meta_path.exists():
             meta_path.unlink()
         return
-    meta_path = site_root / "data_map_meta.json"
-    meta_path.write_text(json.dumps({"row_filters": filters}, indent=2), encoding="utf-8")
+
+    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 

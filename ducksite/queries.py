@@ -6,6 +6,7 @@ import glob
 import re
 import json
 import fnmatch
+import sqlite3
 
 import duckdb
 
@@ -178,6 +179,16 @@ def _load_data_map(site_root: Path) -> Dict[str, str]:
     Values:
       Absolute (or project-relative) filesystem paths.
     """
+    sqlite_path = site_root / "data_map.sqlite"
+    if sqlite_path.exists():
+        try:
+            con = sqlite3.connect(sqlite_path)
+            rows = con.execute("SELECT http_path, physical_path FROM data_map").fetchall()
+            con.close()
+            return {str(k): str(v) for k, v in rows}
+        except sqlite3.Error as e:
+            print(f"[ducksite] WARNING: failed to read {sqlite_path}: {e}")
+
     path = site_root / "data_map.json"
     try:
         text = path.read_text(encoding="utf-8")

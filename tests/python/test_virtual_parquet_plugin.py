@@ -169,4 +169,4 @@ def test_blank_plugin_scaffold_is_loadable(tmp_path: Path) -> None:
     data_map_path = cfg.site_root / "data_map.json"
     meta_path = cfg.site_root / "data_map_meta.json"
     assert json.loads(data_map_path.read_text(encoding="utf-8")) == {}
-    assert not meta_path.exists()
+    assert json.loads(meta_path.read_text(encoding="utf-8"))["fingerprint"]

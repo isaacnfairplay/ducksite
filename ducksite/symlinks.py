@@ -1,7 +1,9 @@
 from __future__ import annotations
 from pathlib import Path
 import glob
+import hashlib
 import json
+import sqlite3
 
 from .config import FileSourceConfig, ProjectConfig
 from .virtual_parquet import (
@@ -102,6 +104,17 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     site_root = cfg.site_root
     ensure_dir(site_root)
 
+    fingerprint = _file_source_fingerprint(cfg)
+    existing_fp = _load_existing_fingerprint(site_root)
+    sqlite_path = site_root / "data_map.sqlite"
+    json_path = site_root / "data_map.json"
+
+    if existing_fp == fingerprint and sqlite_path.exists() and json_path.exists():
+        print(
+            "[ducksite] data map unchanged; reusing existing data_map.sqlite and data_map.json"
+        )
+        return
+
     data_map: dict[str, str] = {}
     row_filters: dict[str, str] = {}
 
@@ -192,7 +205,8 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     out_path = site_root / "data_map.json"
     ensure_dir(out_path.parent)
     out_path.write_text(json.dumps(data_map, indent=2), encoding="utf-8")
-    write_row_filter_meta(site_root, row_filters)
+    _write_sqlite_map(site_root, data_map)
+    write_row_filter_meta(site_root, row_filters, fingerprint=fingerprint)
     print(f"[ducksite] wrote virtual data map {out_path} ({len(data_map)} entries)")
 
 
@@ -203,3 +217,88 @@ if __name__ == "__main__":
     cfg = load_project_config(root)
     build_symlinks(cfg)
     print("Virtual data map built at", cfg.site_root / "data_map.json")
+def _file_source_fingerprint(cfg: ProjectConfig) -> str:
+    payload: list[dict[str, object]] = []
+    for fs in cfg.file_sources:
+        upstream_state: list[dict[str, object]] | None = None
+        if fs.upstream_glob:
+            up = Path(fs.upstream_glob)
+            pattern = str(up) if up.is_absolute() else str(cfg.root / up)
+            try:
+                matches = glob.glob(pattern)
+            except OSError:
+                matches = []
+
+            upstream_state = []
+            for src_path_str in matches:
+                src = Path(src_path_str)
+                if not src.is_file():
+                    continue
+
+                try:
+                    stat = src.stat()
+                except OSError:
+                    continue
+
+                upstream_state.append(
+                    {
+                        "path": str(src),
+                        "mtime_ns": stat.st_mtime_ns,
+                        "size": stat.st_size,
+                    }
+                )
+
+            upstream_state.sort(key=lambda item: item["path"])
+
+        payload.append(
+            {
+                "name": fs.name,
+                "pattern": fs.pattern,
+                "upstream_glob": fs.upstream_glob,
+                "plugin": fs.plugin,
+                "template_name": fs.template_name,
+                "row_filter": fs.row_filter,
+                "row_filter_template": fs.row_filter_template,
+                "hierarchy_before": [h.__dict__ for h in fs.hierarchy_before],
+                "hierarchy": [h.__dict__ for h in fs.hierarchy],
+                "hierarchy_after": [h.__dict__ for h in fs.hierarchy_after],
+                "upstream_state": upstream_state,
+            }
+        )
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _load_existing_fingerprint(site_root: Path) -> str | None:
+    meta_path = site_root / "data_map_meta.json"
+    try:
+        text = meta_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    fp = raw.get("fingerprint")
+    return str(fp) if isinstance(fp, str) else None
+
+
+def _write_sqlite_map(site_root: Path, data_map: dict[str, str]) -> None:
+    sqlite_path = site_root / "data_map.sqlite"
+    ensure_dir(sqlite_path.parent)
+    if sqlite_path.exists():
+        sqlite_path.unlink()
+    con = sqlite3.connect(sqlite_path)
+    try:
+        con.execute(
+            "CREATE TABLE data_map (http_path TEXT PRIMARY KEY, physical_path TEXT)"
+        )
+        con.executemany(
+            "INSERT INTO data_map (http_path, physical_path) VALUES (?, ?)",
+            data_map.items(),
+        )
+        con.commit()
+    finally:
+        con.close()

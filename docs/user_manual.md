@@ -98,7 +98,7 @@ The demo project ships two hierarchy pages: one mirrors the simple day/month/yea
 
 ### How Ducksite interprets configuration
 - `load_project_config` validates `ducksite.toml`, substitutes `DIR_*` variables inside `upstream_glob`, and prepares paths for the builder.
-- During a build, `build_symlinks` scans each `upstream_glob`, preserves directory structure, and writes a virtual `static/data_map.json` so HTTP requests (and DuckDB’s `read_parquet`) resolve against the real files. Missing matches are allowed and logged.
+- During a build, `build_symlinks` scans each `upstream_glob`, preserves directory structure, and writes a virtual `static/data_map.json` (plus a SQLite-backed `static/data_map.sqlite` for fast lookups). When the file-source configuration is unchanged, the builder reuses the existing map instead of rescanning large upstream directories. Missing matches are allowed and logged.
 - If you omit `file_sources`, Ducksite still builds successfully; only the data map will be empty.
 
 ### Virtual hierarchies and plugins
