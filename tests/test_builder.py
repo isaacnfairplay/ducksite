@@ -18,7 +18,7 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from ducksite import demo_init_fake_parquet, js_assets
-from ducksite.builder import build_project, serve_project
+from ducksite.builder import _clean_site, build_project, serve_project
 from ducksite.config import FileSourceConfig, ProjectConfig
 from ducksite.init_project import init_demo_project, init_project
 from ducksite.sternum import AssetPath, Scheme
@@ -79,6 +79,37 @@ def demo_root(tmp_path: Path) -> Path:
 """
     (tmp_path / "ducksite.toml").write_text(cfg, encoding="utf-8")
     return tmp_path
+
+
+def test_clean_preserves_data_maps(tmp_path: Path) -> None:
+    site_root = tmp_path / "static"
+    site_root.mkdir(parents=True, exist_ok=True)
+
+    preserved = {
+        "data_map.json": "{}",
+        "data_map.sqlite": "sqlite stub",
+        "data_map_meta.json": "{}",
+    }
+
+    for name, content in preserved.items():
+        (site_root / name).write_text(content, encoding="utf-8")
+
+    stale_file = site_root / "old.txt"
+    stale_file.write_text("old", encoding="utf-8")
+    stale_dir = site_root / "nested"
+    stale_dir.mkdir()
+    (stale_dir / "file.txt").write_text("remove", encoding="utf-8")
+
+    _clean_site(site_root)
+
+    assert site_root.exists()
+    for name, content in preserved.items():
+        path = site_root / name
+        assert path.exists()
+        assert path.read_text(encoding="utf-8") == content
+
+    assert not stale_file.exists()
+    assert not stale_dir.exists()
 
 
 def test_build_project_generates_site_and_configs(monkeypatch: pytest.MonkeyPatch, demo_root: Path) -> None:

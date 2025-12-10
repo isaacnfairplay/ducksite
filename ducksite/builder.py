@@ -72,9 +72,30 @@ def js_src(asset: JsAsset) -> str:
     return str(JS_BASE / asset.value)
 
 
-def _clean_site(site_root: Path) -> None:
-    if site_root.exists():
+def _clean_site(site_root: Path, preserve_data_maps: bool = True) -> None:
+    if not site_root.exists():
+        ensure_dir(site_root)
+        return
+
+    if not preserve_data_maps:
         shutil.rmtree(site_root)
+        ensure_dir(site_root)
+        return
+
+    preserved = {
+        "data_map.json",
+        "data_map.sqlite",
+        "data_map_meta.json",
+    }
+
+    for child in site_root.iterdir():
+        if child.name in preserved:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
     ensure_dir(site_root)
 
 
