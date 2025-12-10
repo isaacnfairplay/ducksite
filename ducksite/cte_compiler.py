@@ -201,6 +201,89 @@ def _strip_templates(sql: str) -> str:
     return _TEMPLATE_RE.sub("NULL", sql)
 
 
+def _find_join_clauses_without_condition(sql: str) -> List[str]:
+    """
+    Identify JOIN clauses that omit ON/USING, which DuckDB rejects.
+    """
+    warnings: List[str] = []
+    pattern = re.compile(r"\b(?:left|right|full|inner|cross)?\s*join\s+[^\s;()]+", re.IGNORECASE)
+    matches = list(pattern.finditer(sql))
+
+    for idx, match in enumerate(matches):
+        clause = match.group(0)
+        clause_lower = clause.lower()
+        if "cross join" in clause_lower or "natural" in clause_lower:
+            continue
+
+        start = match.end()
+        end = len(sql)
+        if idx + 1 < len(matches):
+            end = matches[idx + 1].start()
+        semicolon = sql.find(";", start)
+        if semicolon != -1 and semicolon < end:
+            end = semicolon
+
+        segment = sql[start:end].lower()
+        if " on " not in segment and " using " not in segment and " natural " not in segment:
+            warnings.append(
+                f"JOIN '{clause.strip()}' is missing an ON/USING clause; "
+                "DuckDB raises a parser error for that shorthand."
+            )
+
+    return warnings
+
+
+def _apply_parser_hints(sql: str) -> tuple[str, List[str]]:
+    """
+    Catch common parser-unsafe typos and optionally auto-fix them.
+
+    The catalog intentionally focuses on short edits that DuckDB will always
+    reject so that we can surface clearer feedback (and sometimes correct the
+    query) before the user hits a parser exception.
+    """
+
+    warnings: List[str] = []
+    fixed_sql = sql
+
+    replacements: List[tuple[Pattern[str], str, str]] = [
+        (
+            re.compile(
+                r"\b(?:left|right|full|inner)\s*(?:outer\s+)?asof\s+join\b", re.IGNORECASE
+            ),
+            "ASOF JOINs cannot be prefixed with LEFT/RIGHT/FULL/INNER; using ASOF JOIN.",
+            "ASOF JOIN",
+        ),
+        (
+            re.compile(r"\b(?:left|right|full|inner)?\s*atni\s+join\b", re.IGNORECASE),
+            "Detected typo 'ATNI JOIN'; assuming ANTI JOIN.",
+            "ANTI JOIN",
+        ),
+    ]
+
+    for pattern, message, replacement in replacements:
+        if pattern.search(fixed_sql):
+            updated = pattern.sub(replacement, fixed_sql)
+            if updated != fixed_sql:
+                fixed_sql = updated
+            warnings.append(f"{message} Auto-corrected safely.")
+
+    using_no_parens = re.compile(
+        r"\busing\s+([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()", re.IGNORECASE
+    )
+
+    def _wrap_using(match: Match[str]) -> str:
+        column = match.group(1)
+        warnings.append(
+            f"USING clause should wrap column names in parentheses; rewrote to USING ({column})."
+        )
+        return f"USING ({column})"
+
+    fixed_sql = using_no_parens.sub(_wrap_using, fixed_sql)
+
+    warnings.extend(_find_join_clauses_without_condition(fixed_sql))
+    return fixed_sql, warnings
+
+
 def compile_query(
     site_root: Path,
     con: duckdb.DuckDBPyConnection,
@@ -213,7 +296,9 @@ def compile_query(
     if top_name not in queries:
         raise KeyError(f"Unknown query {top_name}")
 
-    base_sql = queries[top_name].sql
+    base_sql, parser_warnings = _apply_parser_hints(queries[top_name].sql)
+    for warning in parser_warnings:
+        print(f"[ducksite] ParserWarning: {warning}")
     ctes: Dict[str, str] = {}
     seen: set[str] = set()
     max_steps = 128
