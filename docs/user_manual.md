@@ -104,6 +104,7 @@ The demo project ships two hierarchy pages: one mirrors the simple day/month/yea
 ### Virtual hierarchies and plugins
 
 Hierarchical file sources work with both static file maps and plugin-provided data. A plugin can emit the same `data_map.json` entries (or HTTP handlers) that the static builder writes, so templated hierarchy views resolve against virtual or remote storage without copying data locally. If you need to generate the hierarchy list dynamically (for example, using signed URLs per request), implement a plugin that mirrors the structure of `build_file_source_queries`—returning the level patterns, row filters, and template substitutions—and reuse the browser manifest flow to keep compiled SQL in sync.
+For chained plugins, the helpers `manifest_from_file_source` and `manifest_from_model_views` in `ducksite.virtual_parquet` let you re-expose existing file lists or model dependencies under a new HTTP prefix without touching upstream storage; see `plugins/demo_plugin_chain.py` in the demo project.
 
 ## 2. Add SQL query files (`sources_sql/*.sql`)
 

@@ -10,6 +10,7 @@ from fnmatch import fnmatch
 from typing import TypedDict
 
 from .config import FileSourceConfig, ProjectConfig
+from .data_map_cache import override_data_map, override_row_filters
 from .data_map_paths import data_map_shard, data_map_sqlite_path
 from .virtual_parquet import (
     VirtualParquetManifest,
@@ -159,7 +160,8 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             print(
                 f"[ducksite] data map: loading plugin manifest for {fs.name or '<unnamed>'}"
             )
-            manifest = load_virtual_parquet_manifest(fs.plugin, cfg)
+            with override_data_map(data_map), override_row_filters(row_filters):
+                manifest = load_virtual_parquet_manifest(fs.plugin, cfg)
             ingest_manifest(fs, fs.name, manifest)
             continue
 

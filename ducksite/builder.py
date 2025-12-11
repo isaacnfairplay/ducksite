@@ -289,7 +289,7 @@ def _build_global_queries(
     cfg: ProjectConfig,
     con: duckdb.DuckDBPyConnection,
     named_queries: Dict[str, NamedQuery],
-    compile_cache: Dict[str, Dict[str, object]],
+    compile_cache: Dict[str, Dict[str, Any]],
     fingerprint_token: str,
 ) -> None:
     """
@@ -301,7 +301,7 @@ def _build_global_queries(
 
     site_root = cfg.site_root
     global_rel = Path("_global")
-    manifest: Dict[str, Dict[str, object]] = {}
+    manifest: Dict[str, Dict[str, Any]] = {}
 
     sql_hash = _all_sql_hash(named_queries)
 
@@ -357,7 +357,7 @@ def build_project(root: Path, clean: bool = False) -> None:
         f"[ducksite] building project rooted at {cfg.root} with site output {cfg.site_root}"
     )
 
-    compile_cache: Dict[str, Dict[str, object]] = load_compile_cache(cfg.root)
+    compile_cache: Dict[str, Dict[str, Any]] = load_compile_cache(cfg.root)
 
     if clean:
         step = _log_step_start("cleaning site directory")
