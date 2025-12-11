@@ -4,13 +4,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 import glob
 import re
-import json
 import fnmatch
-import sqlite3
 
 import duckdb
 
 from .config import FileSourceHierarchy, ProjectConfig
+from .data_map_cache import load_data_map, load_row_filters
 from .utils import sha256_text, sha256_list
 
 
@@ -170,57 +169,12 @@ def _build_read_parquet_expr(paths: List[str]) -> str:
     return f"read_parquet([{files_expr}])"
 
 
-def _load_data_map(site_root: Path) -> Dict[str, str]:
-    """
-    Load the virtual data map produced by symlinks.build_symlinks().
-
-    Keys:
-      HTTP-visible paths like 'data/demo/demo-A.parquet'
-    Values:
-      Absolute (or project-relative) filesystem paths.
-    """
-    sqlite_path = site_root / "data_map.sqlite"
-    if sqlite_path.exists():
-        try:
-            con = sqlite3.connect(sqlite_path)
-            rows = con.execute("SELECT http_path, physical_path FROM data_map").fetchall()
-            con.close()
-            return {str(k): str(v) for k, v in rows}
-        except sqlite3.Error as e:
-            print(f"[ducksite] WARNING: failed to read {sqlite_path}: {e}")
-
-    path = site_root / "data_map.json"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    try:
-        raw = json.loads(text)
-    except json.JSONDecodeError as e:
-        print(f"[ducksite] WARNING: failed to parse {path}: {e}")
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
+def _load_data_map(site_root: Path, shard: str | None = None) -> Dict[str, str]:
+    return load_data_map(site_root, shard_hint=shard)
 
 
 def _load_row_filters(site_root: Path) -> Dict[str, str]:
-    path = site_root / "data_map_meta.json"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    try:
-        raw = json.loads(text)
-    except json.JSONDecodeError as e:
-        print(f"[ducksite] WARNING: failed to parse {path}: {e}")
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    filters = raw.get("row_filters")
-    if not isinstance(filters, dict):
-        return {}
-    return {str(k): str(v) for k, v in filters.items() if isinstance(v, str)}
+    return load_row_filters(site_root)
 
 
 def _logical_prefix_token(http_path: str) -> str:
@@ -270,7 +224,7 @@ def build_file_source_queries(
 
     With virtual data maps enabled:
 
-      - We prefer to pull file lists from static/data_map.json, grouping
+      - We prefer to pull file lists from the private data_map.json, grouping
         by HTTP prefix:
 
             data/<file_source_name>/...
@@ -318,7 +272,6 @@ def build_file_source_queries(
         return result
 
     site_root = cfg.site_root
-    data_map = _load_data_map(site_root)
     row_filters = _load_row_filters(site_root)
 
     local_con: Optional[duckdb.DuckDBPyConnection] = None
@@ -331,6 +284,8 @@ def build_file_source_queries(
 
     try:
         for fs in cfg.file_sources:
+            data_map: Optional[dict[str, str]] = None
+
             hierarchy_levels = (
                 fs.hierarchy_before
                 + (fs.hierarchy or [FileSourceHierarchy(pattern=fs.pattern)])
@@ -341,6 +296,9 @@ def build_file_source_queries(
             level_entries: List[dict[str, Any]] = []
             for level in hierarchy_levels:
                 rel_paths: List[str] = []
+
+                if fs.name and data_map is None:
+                    data_map = _load_data_map(site_root, shard=fs.name)
 
                 if data_map and fs.name:
                     prefix = f"data/{fs.name}/"

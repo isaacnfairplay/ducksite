@@ -2,10 +2,10 @@ from __future__ import annotations
 from typing import Dict, List, Match, Optional, Pattern, Tuple
 from pathlib import Path
 import re
-import json
-import sqlite3
 import duckdb
 
+from .data_map_cache import load_data_map
+from .data_map_paths import data_map_shard
 from .queries import NamedQuery, NetworkMetrics
 from .utils import ensure_dir
 
@@ -58,36 +58,12 @@ def _find_read_parquet_paths(compiled_sql: str) -> List[str]:
     return list(seen.keys())
 
 
-def _load_data_map_for_explain(site_root: Path) -> Dict[str, str]:
-    """
-    Load data_map.json when present, for EXPLAIN-time path rewriting.
-
-    Keys: HTTP-visible paths like 'data/demo/demo-data.parquet'
-    Values: filesystem paths for DuckDB to see during EXPLAIN.
-    """
-    sqlite_path = site_root / "data_map.sqlite"
-    if sqlite_path.exists():
-        try:
-            con = sqlite3.connect(sqlite_path)
-            rows = con.execute("SELECT http_path, physical_path FROM data_map").fetchall()
-            con.close()
-            return {str(k): str(v) for k, v in rows}
-        except sqlite3.Error as e:
-            print(f"[ducksite] WARNING: failed to read {sqlite_path}: {e}")
-
-    path = site_root / "data_map.json"
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    try:
-        raw = json.loads(text)
-    except json.JSONDecodeError as e:
-        print(f"[ducksite] WARNING: failed to parse {path}: {e}")
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    return {str(k): str(v) for k, v in raw.items()}
+def _load_data_map_for_explain(site_root: Path, shards: list[str]) -> Dict[str, str]:
+    merged: Dict[str, str] = {}
+    targets = shards or [""]
+    for shard in targets:
+        merged.update(load_data_map(site_root, shard_hint=shard))
+    return merged
 
 
 def _rewrite_virtual_paths_for_explain(site_root: Path, sql: str) -> str:
@@ -100,7 +76,8 @@ def _rewrite_virtual_paths_for_explain(site_root: Path, sql: str) -> str:
     This does NOT affect the compiled SQL written to static/sql/*.sql, which
     still uses HTTP-visible 'data/...' paths for DuckDB-Wasm.
     """
-    data_map = _load_data_map_for_explain(site_root)
+    shard_hints = [data_map_shard(p) for p in _find_read_parquet_paths(sql)]
+    data_map = _load_data_map_for_explain(site_root, shard_hints)
     if not data_map:
         return sql
 

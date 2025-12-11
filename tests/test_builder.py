@@ -20,6 +20,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from ducksite import demo_init_fake_parquet, js_assets
 from ducksite.builder import _clean_site, build_project, serve_project
 from ducksite.config import FileSourceConfig, ProjectConfig
+from ducksite.data_map_cache import load_data_map, load_fingerprint
+from ducksite.data_map_paths import data_map_dir, data_map_sqlite_path
 from ducksite.init_project import init_demo_project, init_project
 from ducksite.sternum import AssetPath, Scheme
 from ducksite.symlinks import build_symlinks
@@ -85,6 +87,9 @@ def test_clean_preserves_data_maps(tmp_path: Path) -> None:
     site_root = tmp_path / "static"
     site_root.mkdir(parents=True, exist_ok=True)
 
+    private_root = data_map_dir(site_root)
+    private_root.mkdir(parents=True, exist_ok=True)
+
     preserved = {
         "data_map.json": "{}",
         "data_map.sqlite": "sqlite stub",
@@ -92,7 +97,7 @@ def test_clean_preserves_data_maps(tmp_path: Path) -> None:
     }
 
     for name, content in preserved.items():
-        (site_root / name).write_text(content, encoding="utf-8")
+        (private_root / name).write_text(content, encoding="utf-8")
 
     stale_file = site_root / "old.txt"
     stale_file.write_text("old", encoding="utf-8")
@@ -104,7 +109,7 @@ def test_clean_preserves_data_maps(tmp_path: Path) -> None:
 
     assert site_root.exists()
     for name, content in preserved.items():
-        path = site_root / name
+        path = private_root / name
         assert path.exists()
         assert path.read_text(encoding="utf-8") == content
 
@@ -170,7 +175,7 @@ label: Country
     sitemap = json.loads((site_root / "sitemap.json").read_text(encoding="utf-8"))
     assert sitemap["routes"] == [AssetPath.INDEX.value, f"/section{AssetPath.INDEX.value}"]
 
-    data_map = json.loads((site_root / "data_map.json").read_text(encoding="utf-8"))
+    data_map = load_data_map(site_root)
     assert data_map == {}
 
     sql_path = site_root / "sql" / "page_query.sql"
@@ -200,20 +205,17 @@ def test_symlinks_map_upstream_files(tmp_path: Path) -> None:
 
     build_symlinks(cfg)
 
-    data_map_path = cfg.site_root / "data_map.json"
-    sqlite_path = cfg.site_root / "data_map.sqlite"
-    assert data_map_path.exists()
+    sqlite_path = data_map_sqlite_path(cfg.site_root)
     assert sqlite_path.exists()
 
-    data_map = json.loads(data_map_path.read_text(encoding="utf-8"))
-    meta = json.loads((cfg.site_root / "data_map_meta.json").read_text(encoding="utf-8"))
+    data_map = load_data_map(cfg.site_root)
     expected_keys = {
         f"data/demo/cat1/{name}" for name in ["first.parquet", "second.parquet"]
     }
     assert set(data_map.keys()) == expected_keys
     for value in data_map.values():
         assert value.startswith(str(upstream))
-    assert meta.get("fingerprint")
+    assert load_fingerprint(cfg.site_root)
 
 
 def test_symlinks_skips_rebuild_when_fingerprint_matches(tmp_path: Path) -> None:
@@ -230,21 +232,16 @@ def test_symlinks_skips_rebuild_when_fingerprint_matches(tmp_path: Path) -> None
 
     build_symlinks(cfg)
 
-    data_map_path = cfg.site_root / "data_map.json"
-    sqlite_path = cfg.site_root / "data_map.sqlite"
-    meta_path = cfg.site_root / "data_map_meta.json"
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-
-    assert data_map_path.exists()
+    sqlite_path = data_map_sqlite_path(cfg.site_root)
     assert sqlite_path.exists()
-    assert meta.get("fingerprint")
+    assert load_fingerprint(cfg.site_root)
 
-    first_mtime = data_map_path.stat().st_mtime
+    first_mtime = sqlite_path.stat().st_mtime
     time.sleep(1.0)
 
     build_symlinks(cfg)
 
-    assert data_map_path.stat().st_mtime == first_mtime
+    assert sqlite_path.stat().st_mtime == first_mtime
     assert sqlite_path.exists()
 
 
@@ -262,22 +259,19 @@ def test_symlinks_rebuilds_when_upstream_changes(tmp_path: Path) -> None:
 
     build_symlinks(cfg)
 
-    data_map_path = cfg.site_root / "data_map.json"
-    sqlite_path = cfg.site_root / "data_map.sqlite"
-    meta_path = cfg.site_root / "data_map_meta.json"
-
-    first_mtime = data_map_path.stat().st_mtime
-    first_meta = json.loads(meta_path.read_text(encoding="utf-8"))["fingerprint"]
+    sqlite_path = data_map_sqlite_path(cfg.site_root)
+    first_mtime = sqlite_path.stat().st_mtime
+    first_meta = load_fingerprint(cfg.site_root)
 
     time.sleep(1.0)
     (upstream / "cat1" / "second.parquet").write_text("demo2", encoding="utf-8")
 
     build_symlinks(cfg)
 
-    refreshed = json.loads(data_map_path.read_text(encoding="utf-8"))
-    refreshed_meta = json.loads(meta_path.read_text(encoding="utf-8"))["fingerprint"]
+    refreshed = load_data_map(cfg.site_root)
+    refreshed_meta = load_fingerprint(cfg.site_root)
 
-    assert data_map_path.stat().st_mtime > first_mtime
+    assert sqlite_path.stat().st_mtime > first_mtime
     assert sqlite_path.exists()
     assert refreshed_meta != first_meta
     assert set(refreshed) == {

@@ -18,6 +18,8 @@ from email.utils import parsedate_to_datetime
 
 from .config import load_project_config, ProjectConfig
 from .cte_compiler import compile_query, write_compiled_sql
+from .data_map_cache import load_data_map
+from .data_map_paths import data_map_shard
 from .html_kit import (
     HtmlTag,
     HtmlAttr,
@@ -82,15 +84,7 @@ def _clean_site(site_root: Path, preserve_data_maps: bool = True) -> None:
         ensure_dir(site_root)
         return
 
-    preserved = {
-        "data_map.json",
-        "data_map.sqlite",
-        "data_map_meta.json",
-    }
-
     for child in site_root.iterdir():
-        if child.name in preserved:
-            continue
         if child.is_dir():
             shutil.rmtree(child)
         else:
@@ -384,7 +378,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
         Custom HTTP handler that implements *virtual symlinks* for /data/...
 
         On each request:
-          - If the requested path matches a key in data_map.json
+          - If the requested path matches a key in the cached data map
             (e.g. 'data/demo/demo-data.parquet'), we serve the file from
             the mapped upstream filesystem path.
           - Otherwise, we serve from cfg.site_root as usual.
@@ -398,17 +392,8 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
             cleaned = unquote(raw)
             key = cleaned.lstrip("/")  # e.g. "data/demo/demo-data.parquet"
 
-            data_map_path = Path(directory) / "data_map.json"
-            data_map: Dict[str, str] = {}
-            try:
-                text = data_map_path.read_text(encoding="utf-8")
-                dm = json.loads(text)
-                if isinstance(dm, dict):
-                    data_map = {str(k): str(v) for k, v in dm.items()}
-            except FileNotFoundError:
-                pass
-            except json.JSONDecodeError as e:
-                print(f"[ducksite] WARNING: failed to parse {data_map_path}: {e}")
+            shard = data_map_shard(key)
+            data_map = load_data_map(cfg.site_root, shard_hint=shard)
 
             if key in data_map:
                 upstream = data_map[key]

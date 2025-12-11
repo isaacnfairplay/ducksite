@@ -3,7 +3,7 @@
 This note sketches how to let a Python "virtual Parquet server" plugin surface remote or generated datasets without forcing every plugin author to reimplement Ducksite plumbing. The goal is to let a plugin declare what Parquet files should exist (and any per-file filters) so Ducksite can expose them through the existing virtual data map and `read_parquet` expansion logic.
 
 ## What Ducksite already does for Parquet files
-- `build_symlinks` writes `static/data_map.json`, mapping logical HTTP paths such as `data/<file_source>/<relative_path>.parquet` to physical locations. The HTTP server streams files using that map; no OS symlinks are needed.
+- `build_symlinks` writes `.ducksite_data/data_map.json`, mapping logical HTTP paths such as `data/<file_source>/<relative_path>.parquet` to physical locations. The HTTP server streams files using that map; no OS symlinks are needed.
 - `build_file_source_queries` reads `data_map.json` (when present) to generate `read_parquet([...])` expressions and optional templated views so DuckDB-Wasm can fetch the files via httpfs.
 - `load_project_config` already supports `[[file_sources]]` entries with `pattern`, `upstream_glob`, and optional templating or row filters, so new data sources can flow through a single configuration surface.
 
@@ -67,10 +67,10 @@ With `ducksite.toml` containing:
 name = "sales"
 plugin = "plugins/sales_lake.py:build_manifest"  # relative to ducksite.toml
 ```
-Ducksite would call the plugin during build, write the resulting paths into `static/data_map.json`, and compile SQL that reuses all the existing `read_parquet` and templating machinery without any plugin-specific code.
+Ducksite would call the plugin during build, write the resulting paths into `.ducksite_data/data_map.sqlite`, and compile SQL that reuses all the existing `read_parquet` and templating machinery without any plugin-specific code.
 
 ## Import and path resolution rules
 - If `plugin` looks like a path (has `/`, `\`, or ends with `.py`), Ducksite loads that file directly with `importlib.util.spec_from_file_location`, temporarily prepending the plugin directory to `sys.path` so sibling imports such as `from helpers import SHARED_CONST` work even when the plugin lives outside the repo.
 - Module-style refs (no slashes) go through `importlib.import_module` with the project root temporarily at the front of `sys.path` so `python -m` style execution matches build-time behaviour.
 - The callable name defaults to `build_manifest` when no `:callable` suffix is provided.
-- Row filters returned per file are persisted to `static/data_map_meta.json` and ANDed into generated SQL so plugin-enforced predicates survive template/view expansion.
+- Row filters returned per file are persisted to the `row_filters` table inside `.ducksite_data/data_map.sqlite` and ANDed into generated SQL so plugin-enforced predicates survive template/view expansion.

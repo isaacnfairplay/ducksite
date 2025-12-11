@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 
 import pytest
 
+from ducksite.data_map_cache import load_data_map, load_fingerprint, load_row_filters
+from ducksite.data_map_paths import data_map_sqlite_path
 from ducksite.config import load_project_config
 from ducksite.queries import build_file_source_queries
 from ducksite.symlinks import build_symlinks
@@ -64,12 +65,12 @@ def test_plugin_loaded_from_external_path(tmp_path: Path) -> None:
     cfg = load_project_config(project_root)
     build_symlinks(cfg)
 
-    data_map = json.loads((cfg.site_root / "data_map.json").read_text(encoding="utf-8"))
-    meta = json.loads((cfg.site_root / "data_map_meta.json").read_text(encoding="utf-8"))
+    data_map = load_data_map(cfg.site_root)
+    filters = load_row_filters(cfg.site_root)
 
     http_path = "data/virtual/table/data.parquet"
     assert data_map[http_path].endswith("upstream/data.parquet")
-    assert meta["row_filters"][http_path] == "region = 'APAC'"
+    assert filters[http_path] == "region = 'APAC'"
     assert cfg.file_sources[0].template_name == "by_region_[region]"
     assert cfg.file_sources[0].row_filter_template == "region = ?"
 
@@ -78,6 +79,7 @@ def test_plugin_loaded_from_external_path(tmp_path: Path) -> None:
     assert "region = 'APAC'" in queries["virtual"].sql
 
     assert str(plugin_root) not in sys.path
+    assert data_map_sqlite_path(cfg.site_root).exists()
 
 
 def test_plugin_callable_must_be_callable(tmp_path: Path) -> None:
@@ -166,7 +168,7 @@ def test_blank_plugin_scaffold_is_loadable(tmp_path: Path) -> None:
     cfg = load_project_config(project_root)
     build_symlinks(cfg)
 
-    data_map_path = cfg.site_root / "data_map.json"
-    meta_path = cfg.site_root / "data_map_meta.json"
-    assert json.loads(data_map_path.read_text(encoding="utf-8")) == {}
-    assert json.loads(meta_path.read_text(encoding="utf-8"))["fingerprint"]
+    data_map_path = data_map_sqlite_path(cfg.site_root)
+    assert data_map_path.exists()
+    assert load_data_map(cfg.site_root) == {}
+    assert load_fingerprint(cfg.site_root)
