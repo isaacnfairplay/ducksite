@@ -106,6 +106,9 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     site_root = cfg.site_root
     ensure_dir(site_root)
 
+    print(
+        f"[ducksite] data map: scanning upstreams for {len(cfg.file_sources)} file_sources"
+    )
     scan_cache = asyncio.run(_collect_upstream_matches(cfg))
     sqlite_path = data_map_sqlite_path(site_root)
 
@@ -141,7 +144,9 @@ def build_symlinks(cfg: ProjectConfig) -> None:
                 f"{fs_name or '<unnamed>'}"
             )
 
-    for fs in cfg.file_sources:
+    for idx, fs in enumerate(cfg.file_sources):
+        fs_label = fs.name or f"file_source_{idx}"
+        print(f"[ducksite] data map: preparing {fs_label}")
         if fs.plugin:
             print(
                 f"[ducksite] data map: loading plugin manifest for {fs.name or '<unnamed>'}"
@@ -170,7 +175,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
 
         print(
             f"[ducksite] data map: scanning upstream files for {fs.name or '<unnamed>'} "
-            f"(pattern: {pattern}, matches: {len(matches)})"
+            f"(pattern: {pattern})"
         )
 
         if not matches:
@@ -212,6 +217,10 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             data_map[key] = str(src)
             mapped_count += 1
 
+        print(
+            f"[ducksite] data map: finished {fs_label}; "
+            f"{mapped_count} upstream files mapped"
+        )
         if mapped_count:
             print(
                 f"[ducksite] data map: registered {mapped_count} entries for "
@@ -238,6 +247,7 @@ async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, o
     async def _collect(fs: FileSourceConfig) -> tuple[int, dict[str, object]]:
         up = Path(fs.upstream_glob)  # type: ignore[arg-type]
         pattern = str(up) if up.is_absolute() else str(cfg.root / up)
+        print(f"[ducksite] data map: glob start for pattern {pattern}")
 
         try:
             matches = await asyncio.to_thread(glob.glob, pattern)
@@ -250,13 +260,19 @@ async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, o
             matches = []
             error = True
 
+        print(
+            f"[ducksite] data map: glob done for pattern {pattern} "
+            f"(matches: {len(matches) if matches else 0}, error: {error})"
+        )
         return id(fs), {"pattern": pattern, "matches": matches, "error": error}
 
     tasks = [_collect(fs) for fs in cfg.file_sources if fs.upstream_glob]
     if not tasks:
         return {}
 
+    print(f"[ducksite] data map: awaiting {len(tasks)} glob tasks")
     results = await asyncio.gather(*tasks)
+    print("[ducksite] data map: glob collection complete")
     return {fs_id: data for fs_id, data in results}
 
 
