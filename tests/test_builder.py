@@ -155,6 +155,28 @@ def test_build_cleans_when_requested(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert (tmp_path / "static" / "index.html").exists()
 
 
+def test_build_removes_stale_pages(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+
+    content = tmp_path / "content"
+    content.mkdir(parents=True, exist_ok=True)
+
+    page = content / "foo.md"
+    page.write_text("# Hello", encoding="utf-8")
+
+    build_project(tmp_path)
+
+    html_out = tmp_path / "static" / "foo.html"
+    assert html_out.exists()
+
+    page.unlink()
+
+    build_project(tmp_path)
+
+    assert not html_out.exists()
+
+
 def test_build_project_generates_site_and_configs(monkeypatch: pytest.MonkeyPatch, demo_root: Path) -> None:
     def fake_download(url: str, dest: Path) -> None:  # noqa: ARG001
         dest.parent.mkdir(parents=True, exist_ok=True)

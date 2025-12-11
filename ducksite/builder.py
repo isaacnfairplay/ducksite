@@ -174,6 +174,32 @@ def _write_sitemap(site_root: Path, all_pages: List[Path]) -> None:
     print(f"[ducksite] wrote sitemap {out}")
 
 
+def _prune_deleted_markdown(cfg: ProjectConfig, current_md: set[Path]) -> None:
+    if not cfg.site_root.exists():
+        return
+
+    for html_path in cfg.site_root.rglob("*.html"):
+        rel_html = html_path.relative_to(cfg.site_root)
+        # Skip non-content outputs (e.g. SQL, data, forms)
+        if rel_html.parts and rel_html.parts[0] in {"sql", "data", "forms"}:
+            continue
+
+        rel_md = rel_html.with_suffix(".md")
+        if rel_md in current_md:
+            continue
+
+        try:
+            html_path.unlink()
+            print(f"[ducksite] removed stale page {html_path}")
+        except FileNotFoundError:
+            continue
+
+        # Remove any page-local SQL outputs for the deleted page.
+        sql_dir = cfg.site_root / "sql" / rel_md.parent
+        if sql_dir.exists() and sql_dir.is_dir() and sql_dir.name != "_global":
+            shutil.rmtree(sql_dir)
+
+
 def _log_step_start(label: str) -> float:
     print(f"[ducksite] {label}...")
     return time.perf_counter()
@@ -367,6 +393,10 @@ def build_project(root: Path, clean: bool = False) -> None:
         for md_path in cfg.content_dir.rglob("*.md"):
             all_md.append(md_path.relative_to(cfg.content_dir))
         _log_step_end(f"found {len(all_md)} markdown files", step)
+
+    step = _log_step_start("pruning deleted markdown outputs")
+    _prune_deleted_markdown(cfg, set(all_md))
+    _log_step_end("pruned deleted markdown outputs", step)
 
     con = duckdb.connect()
     try:
