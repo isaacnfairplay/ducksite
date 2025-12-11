@@ -1,10 +1,12 @@
 from __future__ import annotations
 import asyncio
+import os
 from pathlib import Path
-import glob
 import hashlib
 import json
 import sqlite3
+import time
+from fnmatch import fnmatch
 
 from .config import FileSourceConfig, ProjectConfig
 from .data_map_paths import data_map_shard, data_map_sqlite_path
@@ -114,7 +116,12 @@ def build_symlinks(cfg: ProjectConfig) -> None:
 
     data_map: dict[str, str] = {}
     row_filters: dict[str, str] = {}
+    print("[ducksite] data map: computing file source fingerprints")
+    fp_started = time.perf_counter()
     fingerprints = _file_source_fingerprints(cfg, scan_cache)
+    print(
+        f"[ducksite] data map: finished fingerprints in {time.perf_counter() - fp_started:.2f}s"
+    )
 
     def ingest_manifest(
         fs_cfg: FileSourceConfig | None, fs_name: str | None, manifest: VirtualParquetManifest
@@ -191,10 +198,11 @@ def build_symlinks(cfg: ProjectConfig) -> None:
         fs_root = Path("data") / (fs.name or "")
 
         mapped_count = 0
-        for src_path_str in matches:
-            src = Path(src_path_str)
-            if not src.is_file():
+        for src_entry in matches:
+            if not src_entry.is_file(follow_symlinks=False):
                 continue
+
+            src = Path(src_entry.path)
 
             # Preserve directory structure relative to base_root, but always
             # rooted under data/<fs.name>/...
@@ -250,7 +258,7 @@ async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, o
         print(f"[ducksite] data map: glob start for pattern {pattern}")
 
         try:
-            matches = await asyncio.to_thread(glob.glob, pattern)
+            matches = await asyncio.to_thread(_scandir_glob, pattern)
             error = False
         except OSError as e:
             print(
@@ -276,13 +284,33 @@ async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, o
     return {fs_id: data for fs_id, data in results}
 
 
+def _scandir_glob(pattern: str) -> list[os.DirEntry[str]]:
+    base_root = _common_non_wild_root(pattern)
+    matches: list[os.DirEntry[str]] = []
+
+    def _walk(dir_path: Path) -> None:
+        try:
+            with os.scandir(dir_path) as it:
+                for entry in it:
+                    full_path = Path(dir_path) / entry.name
+                    if entry.is_dir(follow_symlinks=False):
+                        _walk(full_path)
+                    if fnmatch(str(full_path), pattern):
+                        matches.append(entry)
+        except OSError:
+            return
+
+    _walk(base_root)
+    return matches
+
+
 def _file_source_fingerprints(
     cfg: ProjectConfig, upstream_matches: dict[int, dict[str, object]] | None
 ) -> dict[str, str]:
     fingerprints: dict[str, str] = {}
 
     for idx, fs in enumerate(cfg.file_sources):
-        matches: list[str] | None = None
+        matches: list[os.DirEntry[str]] | None = None
         if fs.upstream_glob:
             cached = upstream_matches.get(id(fs)) if upstream_matches else None
             if cached is not None:
@@ -291,15 +319,11 @@ def _file_source_fingerprints(
                 up = Path(fs.upstream_glob)
                 pattern = str(up) if up.is_absolute() else str(cfg.root / up)
                 try:
-                    matches = glob.glob(pattern)
+                    matches = _scandir_glob(pattern)
                 except OSError:
                     matches = []
         upstream_state = (
-            sorted(
-                str(Path(src_path_str))
-                for src_path_str in matches or []
-                if Path(src_path_str).is_file()
-            )
+            sorted(str(Path(entry.path)) for entry in matches or [])
             if matches is not None
             else None
         )
