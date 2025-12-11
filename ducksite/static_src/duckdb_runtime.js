@@ -56,6 +56,7 @@ export async function initDuckDB() {
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
 
     const conn = await db.connect();
+
     duckdbInstance = db;
     duckdbConnection = conn;
 
