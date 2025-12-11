@@ -6,49 +6,13 @@
 // We *only* rely on httpfs-style access to Parquet via HTTP URLs.
 // No OPFS, no registerOPFSFileName.
 
-const DUCKDB_WASM_VERSION = "1.28.0";
+const DUCKDB_WASM_VERSION = "1.30.0";
 const DEFAULT_DUCKDB_WASM_URL =
   `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${DUCKDB_WASM_VERSION}/+esm`;
 
 let duckdbModulePromise = null;
 let duckdbInstance = null;
 let duckdbConnection = null;
-let duckdbHttpfsConfigured = false;
-
-export async function ensureHttpfs(conn) {
-  if (duckdbHttpfsConfigured) {
-    return;
-  }
-  console.debug("[ducksite] initDuckDB: enabling httpfs with metadata cache");
-
-  const loadHttpfs = async () => {
-    await conn.query("LOAD httpfs;");
-  };
-
-  try {
-    await loadHttpfs();
-  } catch (loadErr) {
-    console.warn(
-      "[ducksite] ensureHttpfs: initial LOAD httpfs failed; attempting INSTALL",
-      loadErr,
-    );
-
-    try {
-      await conn.query("INSTALL httpfs;");
-      await loadHttpfs();
-    } catch (installErr) {
-      console.error(
-        "[ducksite] ensureHttpfs: failed to INSTALL+LOAD httpfs",
-        installErr,
-      );
-      throw installErr;
-    }
-  }
-
-  // Enable metadata cache
-  await conn.query("SET enable_http_metadata_cache=true;");
-  duckdbHttpfsConfigured = true;
-}
 
 async function loadDuckDBModule() {
   if (duckdbModulePromise) {
@@ -92,7 +56,6 @@ export async function initDuckDB() {
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
 
     const conn = await db.connect();
-    await ensureHttpfs(conn);
     duckdbInstance = db;
     duckdbConnection = conn;
 
