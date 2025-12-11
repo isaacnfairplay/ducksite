@@ -123,39 +123,16 @@ def _compute_network_metrics(site_root: Path, compiled_sql: str) -> NetworkMetri
     Compute simple network/bytes metrics based on the read_parquet(...) calls
     found in compiled_sql.
 
-    NOTE: When using virtual data maps, compiled_sql still contains HTTP-visible
-    'data/...' paths, so file sizes may not be available under site_root. We
-    simply treat missing files as size 0.
+    This intentionally avoids file stat calls; we only count the referenced
+    files and measure the compiled SQL size.
     """
     paths = _find_read_parquet_paths(compiled_sql)
-    sizes: List[int] = []
-    for rel in paths:
-        full = site_root / rel
-        try:
-            sizes.append(full.stat().st_size)
-        except FileNotFoundError:
-            sizes.append(0)
-    if not sizes:
-        return NetworkMetrics(
-            num_files=0,
-            total_bytes_cold=0,
-            largest_file_bytes=0,
-            two_largest_bytes=0,
-            avg_file_bytes=0.0,
-            sql_bytes=len(compiled_sql.encode("utf-8")),
-        )
-    total = sum(sizes)
-    n = len(sizes)
-    sorted_sizes = sorted(sizes, reverse=True)
-    largest = sorted_sizes[0]
-    second = sorted_sizes[1] if len(sorted_sizes) > 1 else 0
-    avg = total / n
     return NetworkMetrics(
-        num_files=n,
-        total_bytes_cold=total,
-        largest_file_bytes=largest,
-        two_largest_bytes=largest + second,
-        avg_file_bytes=avg,
+        num_files=len(paths),
+        total_bytes_cold=0,
+        largest_file_bytes=0,
+        two_largest_bytes=0,
+        avg_file_bytes=0.0,
         sql_bytes=len(compiled_sql.encode("utf-8")),
     )
 

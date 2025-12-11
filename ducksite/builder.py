@@ -324,7 +324,7 @@ def _build_global_queries(
     print(f"[ducksite] wrote SQL manifest {manifest_path}")
 
 
-def build_project(root: Path) -> None:
+def build_project(root: Path, clean: bool = False) -> None:
     build_started = time.perf_counter()
     cfg: ProjectConfig = load_project_config(root)
     print(
@@ -333,9 +333,10 @@ def build_project(root: Path) -> None:
 
     compile_cache: Dict[str, Dict[str, object]] = load_compile_cache(cfg.root)
 
-    step = _log_step_start("cleaning site directory")
-    _clean_site(cfg.site_root)
-    _log_step_end("cleaned site directory", step)
+    if clean:
+        step = _log_step_start("cleaning site directory")
+        _clean_site(cfg.site_root)
+        _log_step_end("cleaned site directory", step)
 
     step = _log_step_start("ensuring JS/CSS assets")
     ensure_js_assets(root, cfg.site_root)
@@ -450,7 +451,9 @@ def build_project(root: Path) -> None:
     print(f"[ducksite] build complete in {build_elapsed:.2f}s.")
 
 
-def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> None:
+def serve_project(
+    root: Path, port: int = 8080, backend: str = "builtin", clean: bool = False
+) -> None:
     """
     Serve the built site with a simple HTTP server and a background watcher.
 
@@ -464,7 +467,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
     forms_map = discover_forms(cfg)
 
     def watch_loop() -> None:
-        watch_and_build(root, interval=2.0)
+        watch_and_build(root, interval=2.0, clean=clean)
 
     t = threading.Thread(target=watch_loop, daemon=True)
     t.start()

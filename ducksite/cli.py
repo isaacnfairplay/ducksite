@@ -47,6 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Watch for changes and rebuild automatically (build only).",
     )
     parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Clean the static output directory before the first build run.",
+    )
+    parser.add_argument(
         "--port",
         type=int,
         default=8080,
@@ -85,11 +90,11 @@ def main() -> None:
         init_demo_project(root)
     elif args.command == "build":
         if args.reload:
-            watch_and_build(root)
+            watch_and_build(root, clean=args.clean)
         else:
-            build_project(root)
+            build_project(root, clean=args.clean)
     elif args.command == "serve":
-        serve_project(root, port=args.port, backend=args.server)
+        serve_project(root, port=args.port, backend=args.server, clean=args.clean)
 
 
 if __name__ == "__main__":
