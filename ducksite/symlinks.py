@@ -7,6 +7,7 @@ import json
 import sqlite3
 import time
 from fnmatch import fnmatch
+from typing import TypedDict
 
 from .config import FileSourceConfig, ProjectConfig
 from .data_map_paths import data_map_shard, data_map_sqlite_path
@@ -170,7 +171,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
         if scan is None:
             up = Path(fs.upstream_glob)
             pattern = str(up) if up.is_absolute() else str(cfg.root / up)
-            matches = []
+            matches: list[os.DirEntry[str]] = []
             scan_error = False
         else:
             pattern = scan["pattern"]
@@ -251,8 +252,17 @@ if __name__ == "__main__":
     print("Virtual data map built at", data_map_sqlite_path(cfg.site_root))
 
 
-async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, object]]:
-    async def _collect(fs: FileSourceConfig) -> tuple[int, dict[str, object]]:
+class ScanResult(TypedDict):
+    pattern: str
+    matches: list[os.DirEntry[str]]
+    error: bool
+
+
+ScanCache = dict[int, ScanResult]
+
+
+async def _collect_upstream_matches(cfg: ProjectConfig) -> ScanCache:
+    async def _collect(fs: FileSourceConfig) -> tuple[int, ScanResult]:
         up = Path(fs.upstream_glob)  # type: ignore[arg-type]
         pattern = str(up) if up.is_absolute() else str(cfg.root / up)
         print(f"[ducksite] data map: glob start for pattern {pattern}")
@@ -327,7 +337,7 @@ def _scandir_glob(pattern: str) -> list[os.DirEntry[str]]:
 
 
 def _file_source_fingerprints(
-    cfg: ProjectConfig, upstream_matches: dict[int, dict[str, object]] | None
+    cfg: ProjectConfig, upstream_matches: ScanCache | None
 ) -> dict[str, str]:
     fingerprints: dict[str, str] = {}
 
