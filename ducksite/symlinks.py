@@ -106,8 +106,10 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     site_root = cfg.site_root
     ensure_dir(site_root)
 
+    scan_cache = _collect_upstream_matches(cfg)
+
     print("[ducksite] data map: computing fingerprint")
-    fingerprint = _file_source_fingerprint(cfg)
+    fingerprint = _file_source_fingerprint(cfg, scan_cache)
     existing_fp = _load_existing_fingerprint(site_root)
     sqlite_path = data_map_sqlite_path(site_root)
 
@@ -127,6 +129,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             fs_cfg.row_filter_template = manifest.row_filter_template
 
         fs_root = Path("data") / (fs_name or "")
+        added = 0
         for f in manifest.files:
             key = (fs_root / f.http_path).as_posix() if not f.http_path.startswith("data/") else f.http_path
             if key in data_map and data_map[key] != f.physical_path:
@@ -137,6 +140,13 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             data_map[key] = f.physical_path
             if f.row_filter:
                 row_filters[key] = f.row_filter
+            added += 1
+
+        if added:
+            print(
+                f"[ducksite] data map: registered {added} plugin entries for "
+                f"{fs_name or '<unnamed>'}"
+            )
 
     for fs in cfg.file_sources:
         if fs.plugin:
@@ -150,28 +160,25 @@ def build_symlinks(cfg: ProjectConfig) -> None:
         if not fs.upstream_glob:
             continue
 
-        print(
-            f"[ducksite] data map: scanning upstream files for {fs.name or '<unnamed>'}"
-        )
+        scan = scan_cache.get(id(fs))
 
-        # Treat upstream_glob as absolute if it is an absolute/UNC path;
-        # otherwise interpret it relative to the project root.
-        up = Path(fs.upstream_glob)
-        if up.is_absolute():
-            pattern = str(up)
+        if scan is None:
+            up = Path(fs.upstream_glob)
+            pattern = str(up) if up.is_absolute() else str(cfg.root / up)
+            matches = []
+            scan_error = False
         else:
-            pattern = str(cfg.root / up)
+            pattern = scan["pattern"]
+            matches = scan["matches"]
+            scan_error = scan["error"]
 
-        base_root = _common_non_wild_root(pattern)
-
-        try:
-            matches = glob.glob(pattern)
-        except OSError as e:
-            print(
-                f"[ducksite] WARNING: glob failed for pattern {pattern}: {e}; "
-                f"skipping file_source {fs.name or '<unnamed>'}"
-            )
+        if scan_error:
             continue
+
+        print(
+            f"[ducksite] data map: scanning upstream files for {fs.name or '<unnamed>'} "
+            f"(pattern: {pattern}, matches: {len(matches)})"
+        )
 
         if not matches:
             print(
@@ -180,9 +187,12 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             )
             continue
 
+        base_root = _common_non_wild_root(pattern)
+
         # Logical root for this file_source under /data; default to flat if unnamed.
         fs_root = Path("data") / (fs.name or "")
 
+        mapped_count = 0
         for src_path_str in matches:
             src = Path(src_path_str)
             if not src.is_file():
@@ -207,6 +217,13 @@ def build_symlinks(cfg: ProjectConfig) -> None:
                 )
 
             data_map[key] = str(src)
+            mapped_count += 1
+
+        if mapped_count:
+            print(
+                f"[ducksite] data map: registered {mapped_count} entries for "
+                f"{fs.name or '<unnamed>'}"
+            )
 
     # Write the virtual symlink map for the HTTP server.
     print("[ducksite] data map: writing sqlite index")
@@ -222,17 +239,53 @@ if __name__ == "__main__":
     cfg = load_project_config(root)
     build_symlinks(cfg)
     print("Virtual data map built at", data_map_sqlite_path(cfg.site_root))
-def _file_source_fingerprint(cfg: ProjectConfig) -> str:
+
+
+def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, object]]:
+    matches_by_fs: dict[int, dict[str, object]] = {}
+    for fs in cfg.file_sources:
+        if not fs.upstream_glob:
+            continue
+
+        up = Path(fs.upstream_glob)
+        pattern = str(up) if up.is_absolute() else str(cfg.root / up)
+
+        try:
+            matches = glob.glob(pattern)
+            error = False
+        except OSError as e:
+            print(
+                f"[ducksite] WARNING: glob failed for pattern {pattern}: {e}; "
+                f"skipping file_source {fs.name or '<unnamed>'}"
+            )
+            matches = []
+            error = True
+
+        matches_by_fs[id(fs)] = {"pattern": pattern, "matches": matches, "error": error}
+
+    return matches_by_fs
+
+
+def _file_source_fingerprint(
+    cfg: ProjectConfig, upstream_matches: dict[int, dict[str, object]] | None = None
+) -> str:
     payload: list[dict[str, object]] = []
     for fs in cfg.file_sources:
         upstream_state: list[str] | None = None
         if fs.upstream_glob:
-            up = Path(fs.upstream_glob)
-            pattern = str(up) if up.is_absolute() else str(cfg.root / up)
-            try:
-                matches = glob.glob(pattern)
-            except OSError:
-                matches = []
+            matches: list[str] | None = None
+            if upstream_matches is not None:
+                cached = upstream_matches.get(id(fs))
+                if cached is not None:
+                    matches = cached.get("matches") or []
+
+            if matches is None:
+                up = Path(fs.upstream_glob)
+                pattern = str(up) if up.is_absolute() else str(cfg.root / up)
+                try:
+                    matches = glob.glob(pattern)
+                except OSError:
+                    matches = []
 
             upstream_state = sorted(
                 str(Path(src_path_str))
