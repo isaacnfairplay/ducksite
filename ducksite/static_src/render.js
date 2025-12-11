@@ -95,7 +95,9 @@ function getPageSqlBasePath() {
   const path = window.location.pathname;
   const clean = path.endsWith("/") ? path.slice(0, -1) : path;
   const lastSlash = clean.lastIndexOf("/");
-  const dir = lastSlash <= 0 ? "" : clean.slice(0, lastSlash);
+  const lastSegment = clean.slice(lastSlash + 1);
+  const isFile = lastSegment.includes(".");
+  const dir = isFile ? clean.slice(0, lastSlash) : clean;
   const relDir = dir.startsWith("/") ? dir.slice(1) : dir;
 
   const base = relDir ? `${PATH.sqlRoot}/${relDir}/` : `${PATH.sqlRoot}/`;
@@ -1728,4 +1730,5 @@ export {
   buildDerivedSqlWithFormatting,
   normalizeQueryId,
   initInputsUI,
+  getPageSqlBasePath,
 };

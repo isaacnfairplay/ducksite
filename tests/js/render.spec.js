@@ -5,6 +5,7 @@ let buildParamsFromInputs;
 let substituteParams;
 let rewriteParquetPathsHttp;
 let normalizeQueryId;
+let getPageSqlBasePath;
 
 beforeAll(async () => {
   const mod = await import('../../ducksite/static_src/render.js');
@@ -13,6 +14,7 @@ beforeAll(async () => {
     substituteParams,
     rewriteParquetPathsHttp,
     normalizeQueryId,
+    getPageSqlBasePath,
   } = mod);
 });
 
@@ -123,5 +125,20 @@ describe('normalizeQueryId', () => {
     expect(valid).toBe(true);
     expect(id).toBe('gallery_q1_totals');
     expect(basePath).toBe('/sql/reports/');
+  });
+});
+
+describe('getPageSqlBasePath', () => {
+  it('keeps full directory depth for trailing slash URLs', () => {
+    const original = window.location.href;
+    window.history.pushState(
+      {},
+      '',
+      'https://example.com/scrap/tests/cost_associations/',
+    );
+
+    expect(getPageSqlBasePath()).toBe('/sql/scrap/tests/cost_associations/');
+
+    window.history.pushState({}, '', original);
   });
 });
