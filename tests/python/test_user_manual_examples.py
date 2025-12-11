@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from ducksite.builder import build_project
 from ducksite.config import load_project_config
+from ducksite.data_map_paths import data_map_sqlite_path
 from ducksite.init_project import init_demo_project, init_project
 
 
@@ -25,7 +25,7 @@ def test_demo_scaffold_builds(tmp_path: Path, monkeypatch) -> None:
 
     site_root = tmp_path / "static"
     assert (site_root / "index.html").exists()
-    assert (site_root / "data_map.json").exists()
+    assert data_map_sqlite_path(site_root).exists()
 
 
 def test_scratch_project_builds_without_file_sources(tmp_path: Path, monkeypatch) -> None:

@@ -13,6 +13,7 @@ import pytest
 
 from ducksite import js_assets
 from ducksite.builder import build_project
+from ducksite.data_map_cache import load_data_map
 from ducksite.init_project import init_demo_project
 
 SNAPSHOT_HELPER = Path(__file__).resolve().parents[1] / "tools" / "snapshot_chart.js"
@@ -150,10 +151,7 @@ def layout_probe_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     build_project(tmp_path)
 
     site_root = tmp_path / "static"
-    data_map_path = site_root / "data_map.json"
-    data_map: dict[str, str] = {}
-    if data_map_path.exists():
-        data_map = json.loads(data_map_path.read_text(encoding="utf-8"))
+    data_map: dict[str, str] = load_data_map(site_root)
 
     layout_probe = site_root / "layout_probe.html"
     layout_probe.write_text(

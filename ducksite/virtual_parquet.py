@@ -3,14 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 import importlib.util
-import json
 from pathlib import Path
+import sqlite3
 import sys
 from types import ModuleType
 from typing import Callable, Iterable, Iterator
 from contextlib import contextmanager
 
 from .config import ProjectConfig
+from .data_map_paths import data_map_dir, data_map_sqlite_path
+from .utils import ensure_dir
 
 
 DEFAULT_PLUGIN_CALLABLE = "build_manifest"
@@ -136,18 +138,32 @@ def load_virtual_parquet_manifest(plugin_ref: str, cfg: ProjectConfig) -> Virtua
 def write_row_filter_meta(
     site_root: Path, filters: dict[str, str], fingerprint: str | None = None
 ) -> None:
-    meta: dict[str, object] = {}
-    if filters:
-        meta["row_filters"] = filters
-    if fingerprint:
-        meta["fingerprint"] = fingerprint
+    sqlite_path = data_map_sqlite_path(site_root)
+    ensure_dir(sqlite_path.parent)
 
-    meta_path = site_root / "data_map_meta.json"
+    con = sqlite3.connect(sqlite_path)
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS row_filters (http_path TEXT PRIMARY KEY, filter TEXT)"
+        )
+        con.execute("DELETE FROM row_filters")
+        if filters:
+            con.executemany(
+                "INSERT INTO row_filters (http_path, filter) VALUES (?, ?)",
+                ((str(k), str(v)) for k, v in filters.items()),
+            )
+        con.execute("DELETE FROM meta WHERE key = 'fingerprint'")
+        if fingerprint:
+            con.execute(
+                "INSERT INTO meta (key, value) VALUES ('fingerprint', ?)",
+                (fingerprint,),
+            )
+        con.commit()
+    finally:
+        con.close()
 
-    if not meta:
-        if meta_path.exists():
-            meta_path.unlink()
-        return
-
-    meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    legacy_meta_path = data_map_dir(site_root) / "data_map_meta.json"
+    if legacy_meta_path.exists():
+        legacy_meta_path.unlink()
 

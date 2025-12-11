@@ -6,6 +6,8 @@ import json
 import sqlite3
 
 from .config import FileSourceConfig, ProjectConfig
+from .data_map_paths import data_map_shard, data_map_sqlite_path
+from .data_map_cache import load_fingerprint
 from .virtual_parquet import (
     VirtualParquetManifest,
     load_virtual_parquet_manifest,
@@ -60,9 +62,9 @@ def _common_non_wild_root(pattern: str) -> Path:
 def build_symlinks(cfg: ProjectConfig) -> None:
     """
     Build a *virtual* symlink map from HTTP paths under /data/... to
-    upstream filesystem paths, and write it to:
+    upstream filesystem paths, and write it to the private cache:
 
-        <site_root>/data_map.json
+        <root>/.ducksite_data/data_map.sqlite
 
     The HTTP file power-router will then use this map at runtime to serve
     real files without creating any copies or OS-level symlinks.
@@ -95,7 +97,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
         read_parquet(['data/defect_management_demo/0.parquet', ...])
 
     The Python HTTP server sees `/data/defect_management_demo/0.parquet`,
-    looks up the physical path in data_map.json, and streams that file.
+    looks up the physical path in data_map.sqlite, and streams that file.
 
     NOTE:
       - We do not touch the filesystem under site_root/data at all.
@@ -106,13 +108,10 @@ def build_symlinks(cfg: ProjectConfig) -> None:
 
     fingerprint = _file_source_fingerprint(cfg)
     existing_fp = _load_existing_fingerprint(site_root)
-    sqlite_path = site_root / "data_map.sqlite"
-    json_path = site_root / "data_map.json"
+    sqlite_path = data_map_sqlite_path(site_root)
 
-    if existing_fp == fingerprint and sqlite_path.exists() and json_path.exists():
-        print(
-            "[ducksite] data map unchanged; reusing existing data_map.sqlite and data_map.json"
-        )
+    if existing_fp == fingerprint and sqlite_path.exists():
+        print("[ducksite] data map unchanged; reusing existing data_map.sqlite")
         return
 
     data_map: dict[str, str] = {}
@@ -202,12 +201,9 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             data_map[key] = str(src)
 
     # Write the virtual symlink map for the HTTP server.
-    out_path = site_root / "data_map.json"
-    ensure_dir(out_path.parent)
-    out_path.write_text(json.dumps(data_map, indent=2), encoding="utf-8")
     _write_sqlite_map(site_root, data_map)
     write_row_filter_meta(site_root, row_filters, fingerprint=fingerprint)
-    print(f"[ducksite] wrote virtual data map {out_path} ({len(data_map)} entries)")
+    print(f"[ducksite] wrote virtual data map ({len(data_map)} entries)")
 
 
 if __name__ == "__main__":
@@ -216,7 +212,7 @@ if __name__ == "__main__":
     root = Path(".").resolve()
     cfg = load_project_config(root)
     build_symlinks(cfg)
-    print("Virtual data map built at", cfg.site_root / "data_map.json")
+    print("Virtual data map built at", data_map_sqlite_path(cfg.site_root))
 def _file_source_fingerprint(cfg: ProjectConfig) -> str:
     payload: list[dict[str, object]] = []
     for fs in cfg.file_sources:
@@ -255,34 +251,27 @@ def _file_source_fingerprint(cfg: ProjectConfig) -> str:
 
 
 def _load_existing_fingerprint(site_root: Path) -> str | None:
-    meta_path = site_root / "data_map_meta.json"
-    try:
-        text = meta_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    try:
-        raw = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(raw, dict):
-        return None
-    fp = raw.get("fingerprint")
-    return str(fp) if isinstance(fp, str) else None
+    return load_fingerprint(site_root)
 
 
 def _write_sqlite_map(site_root: Path, data_map: dict[str, str]) -> None:
-    sqlite_path = site_root / "data_map.sqlite"
+    sqlite_path = data_map_sqlite_path(site_root)
     ensure_dir(sqlite_path.parent)
     if sqlite_path.exists():
         sqlite_path.unlink()
     con = sqlite3.connect(sqlite_path)
     try:
         con.execute(
-            "CREATE TABLE data_map (http_path TEXT PRIMARY KEY, physical_path TEXT)"
+            "CREATE TABLE data_map (shard TEXT, http_path TEXT PRIMARY KEY, physical_path TEXT)"
+        )
+        con.execute("CREATE INDEX data_map_shard_idx ON data_map(shard)")
+        con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        con.execute(
+            "CREATE TABLE row_filters (http_path TEXT PRIMARY KEY, filter TEXT)"
         )
         con.executemany(
-            "INSERT INTO data_map (http_path, physical_path) VALUES (?, ?)",
-            data_map.items(),
+            "INSERT INTO data_map (shard, http_path, physical_path) VALUES (?, ?, ?)",
+            ((data_map_shard(k), k, v) for k, v in data_map.items()),
         )
         con.commit()
     finally:
