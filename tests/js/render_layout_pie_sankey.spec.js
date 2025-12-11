@@ -62,7 +62,6 @@ beforeEach(async () => {
   vi.mock('../../ducksite/static_src/duckdb_runtime.js', () => ({
     initDuckDB: vi.fn().mockResolvedValue({ conn: {} }),
     executeQuery: (...args) => executeQueryMock(...args),
-    ensureHttpfs: vi.fn().mockResolvedValue(),
   }));
 });
 
