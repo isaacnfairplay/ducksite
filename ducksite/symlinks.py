@@ -286,21 +286,43 @@ async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, o
 
 def _scandir_glob(pattern: str) -> list[os.DirEntry[str]]:
     base_root = _common_non_wild_root(pattern)
+    try:
+        relative_parts = Path(pattern).relative_to(base_root).parts
+    except ValueError:
+        relative_parts = Path(pattern).parts
+
     matches: list[os.DirEntry[str]] = []
 
-    def _walk(dir_path: Path) -> None:
+    def _walk(dir_path: Path, part_idx: int) -> None:
+        if part_idx >= len(relative_parts):
+            return
+
+        part = relative_parts[part_idx]
+        is_double_star = part == "**"
+
         try:
             with os.scandir(dir_path) as it:
                 for entry in it:
-                    full_path = Path(dir_path) / entry.name
-                    if entry.is_dir(follow_symlinks=False):
-                        _walk(full_path)
-                    if fnmatch(str(full_path), pattern):
-                        matches.append(entry)
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                    name = entry.name
+
+                    if is_double_star:
+                        if is_dir:
+                            _walk(Path(entry.path), part_idx)
+                        continue
+
+                    if fnmatch(name, part):
+                        if part_idx == len(relative_parts) - 1:
+                            matches.append(entry)
+                        elif is_dir:
+                            _walk(Path(entry.path), part_idx + 1)
         except OSError:
             return
 
-    _walk(base_root)
+        if is_double_star:
+            _walk(dir_path, part_idx + 1)
+
+    _walk(base_root, 0)
     return matches
 
 
