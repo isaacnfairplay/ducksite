@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.request import urlopen
 import ssl
 import shutil
+import filecmp
 
 from .utils import ensure_dir
 from .html_kit import HtmlAttr, SitePath, HtmlId
@@ -45,21 +46,25 @@ def _copy_static_src_assets(site_root: Path) -> None:
     ensure_dir(js_root)
     ensure_dir(css_root)
 
+    def _sync_if_changed(src_path: Path, dest: Path) -> None:
+        if dest.exists() and filecmp.cmp(src_path, dest, shallow=False):
+            return
+        shutil.copy2(src_path, dest)
+        print(f"[ducksite] synced asset {dest}")
+
     # JS modules
     for src in static_src_dir.iterdir():
         if src.name.endswith(".js"):
             with resources.as_file(src) as src_path:
                 dest = js_root / src_path.name
-                shutil.copy2(src_path, dest)
-                print(f"[ducksite] synced JS asset {dest}")
+                _sync_if_changed(src_path, dest)
 
     # CSS files (e.g. ducksite.css, charts.css)
     for src in static_src_dir.iterdir():
         if src.name.endswith(".css"):
             with resources.as_file(src) as src_path:
                 dest = css_root / src_path.name
-                shutil.copy2(src_path, dest)
-                print(f"[ducksite] synced CSS asset {dest}")
+                _sync_if_changed(src_path, dest)
 
 
 def _to_camel(enum_name: str) -> str:
