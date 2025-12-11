@@ -147,6 +147,35 @@ select * from numbers
 ```
 When built, this page becomes `static/index.html` with the compiled SQL beside it at `static/sql/index/inventory_rows.sql`.
 
+### Filters and dropdown inputs
+
+Declare filters with fenced `input` blocks in your markdown. A `visual_mode` of `dropdown` renders a `<select>` in the input bar and feeds values into `${params.*}` placeholders via the `expression_template`:
+
+````markdown
+```input category_filter
+label: Category filter
+visual_mode: dropdown
+options_query: category_filter_options
+expression_template: "category = ?"
+all_label: ALL
+all_expression: "TRUE"
+```
+````
+
+Set `multiple: true` to allow multi-select dropdowns. The selected values are treated as arrays, synced to the URL as comma-separated strings, and substituted into the `expression_template` with quoting. For multi-select filters, prefer an `IN (?)` predicate so multiple values stay valid SQL:
+
+````markdown
+```input region_filter
+label: Regions
+visual_mode: dropdown
+multiple: true
+options_query: region_options
+expression_template: "region IN (?)"
+all_label: ALL
+all_expression: "TRUE"
+```
+````
+
 ## 4. Build and serve the site
 
 ### Build

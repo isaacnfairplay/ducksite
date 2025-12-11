@@ -108,6 +108,16 @@ a:hover {
   color: var(--ducksite-fg);
 }
 
+.ducksite-input-group select[multiple] {
+  min-height: 6rem;
+  padding: 0.4rem 0.5rem;
+  line-height: 1.4;
+}
+
+.ducksite-input-group select[multiple] option {
+  padding: 0.15rem 0.25rem;
+}
+
 /* Markdown content wrapper (rendered from non-special sections of .md) */
 
 .ducksite-md {

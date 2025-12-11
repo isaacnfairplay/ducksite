@@ -8,6 +8,7 @@
 
 import { initDuckDB, executeQuery } from "./duckdb_runtime.js";
 import { CLASS, DATA, PATH } from "./ducksite_contract.js";
+import { isMultiple, normalizeMultiValues } from "./inputs.js";
 
 const DARK_BG = "#020617";
 const DARK_FG = "#e5e7eb";
@@ -152,13 +153,30 @@ function buildParamsFromInputs(inputDefs, inputs) {
     if (!template) continue;
 
     const allLabel = def.all_label || def["all-label"] || "ALL";
+    const allValue = def.all_value || def["all-value"] || allLabel;
     const allExpr = def.all_expression || def["all-expression"] || "TRUE";
-
-    const rawValue = inputs[name] ?? def.default ?? allLabel;
+    const multiple = isMultiple(def);
+    const rawValue = inputs[name] ?? def.default ?? (multiple ? [] : allValue);
     let predicate;
 
-    if (
+    if (multiple) {
+      const values = normalizeMultiValues(rawValue);
+      const isAllSelected =
+        values.length === 0 || values.includes(allLabel) || values.includes(allValue);
+
+      if (isAllSelected) {
+        predicate = allExpr;
+      } else {
+        const escapedValues = values.map((v) => String(v).replace(/'/g, "''"));
+        const quoted = escapedValues.map((v) => `'${v}'`).join(", ");
+        const replacementBase = values.length === 1 ? `'${escapedValues[0]}'` : quoted;
+        const needsParens = values.length > 1 && !/\(\s*\?\s*\)/.test(template);
+        const replacement = needsParens ? `(${replacementBase})` : replacementBase;
+        predicate = template.replace("?", replacement);
+      }
+    } else if (
       rawValue === allLabel ||
+      rawValue === allValue ||
       rawValue === "" ||
       rawValue === null ||
       rawValue === undefined
@@ -196,19 +214,20 @@ function buildParamsFromInputs(inputDefs, inputs) {
       continue;
     }
 
-    const rawValue = inputs[name] ?? def.default ?? null;
-    if (
-      rawValue === null ||
-      rawValue === undefined ||
-      rawValue === ""
-    ) {
+    const multiple = isMultiple(def);
+    const rawValue = inputs[name] ?? def.default ?? (multiple ? [] : null);
+    const values = multiple ? normalizeMultiValues(rawValue) : [rawValue];
+    if (values.length === 0 || values[0] === null || values[0] === undefined || values[0] === "") {
       // Skip empty values; callers can treat missing params as "no-op".
       continue;
     }
 
-    const v = String(rawValue);
-    const escaped = v.replace(/'/g, "''");
-    const snippet = template.replace("?", `'${escaped}'`);
+    const escapedValues = values.map((v) => String(v).replace(/'/g, "''"));
+    const quoted = escapedValues.map((v) => `'${v}'`).join(", ");
+    const replacementBase = multiple && values.length > 1 ? quoted : `'${escapedValues[0]}'`;
+    const needsParens = multiple && values.length > 1 && !/\(\s*\?\s*\)/.test(template);
+    const replacement = needsParens ? `(${replacementBase})` : replacementBase;
+    const snippet = template.replace("?", replacement);
 
     // Try to infer a simple prefix-based "derived ID" from the param_template
     // so we can also expose it in inputs[targetName] for query-id templates.
@@ -218,6 +237,7 @@ function buildParamsFromInputs(inputDefs, inputs) {
     //   substr(?, 1, N)
     //   substring(?, 1, N)
     let derivedId = null;
+    const v = String(values[0]);
     const normalized = template.replace(/\s+/g, "").toLowerCase();
 
     if (normalized.startsWith("left(?,") && normalized.endsWith(")")) {
@@ -616,10 +636,15 @@ async function initInputsUI(inputDefs, inputs, runQuery) {
     if (visualMode === "dropdown") {
       const select = document.createElement("select");
       select.id = controlId;
+      const multiple = isMultiple(def);
+      if (multiple) {
+        select.multiple = true;
+        select.size = 6;
+      }
 
       const allLabel = def.all_label || def["all-label"] || "ALL";
       const allValue = def.all_value || def["all-value"] || allLabel;
-      const defaultRaw = inputs[name] ?? def.default ?? allValue;
+      const defaultRaw = inputs[name] ?? def.default ?? (multiple ? [] : allValue);
 
       const optAll = document.createElement("option");
       optAll.value = allValue;
@@ -651,12 +676,33 @@ async function initInputsUI(inputDefs, inputs, runQuery) {
         }
       }
 
-      select.value = defaultRaw ?? allValue;
+      if (multiple) {
+        const selectedValues = normalizeMultiValues(defaultRaw);
+        const targetSelection = selectedValues.length ? selectedValues : [allValue];
+        for (const opt of select.options) {
+          opt.selected = targetSelection.includes(opt.value);
+        }
+      } else {
+        select.value = defaultRaw ?? allValue;
+      }
 
       select.addEventListener("change", () => {
-        const newVal = select.value;
+        const getSelectedValues = () =>
+          Array.from(select.selectedOptions || []).map((opt) => opt.value);
+
+        const newVal = multiple ? getSelectedValues() : select.value;
+        const isAllSelected = multiple && newVal.includes(allValue);
+
+        if (multiple && isAllSelected) {
+          for (const opt of select.options) {
+            opt.selected = opt.value === allValue;
+          }
+        }
+
+        const effectiveVal = multiple && isAllSelected ? [] : newVal;
+
         if (typeof window.ducksiteSetInput === "function") {
-          window.ducksiteSetInput(name, newVal);
+          window.ducksiteSetInput(name, effectiveVal);
         } else {
           console.warn(
             "[ducksite] ducksiteSetInput is not defined; URL sync will not occur.",

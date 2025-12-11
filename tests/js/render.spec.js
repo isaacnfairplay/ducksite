@@ -50,6 +50,36 @@ describe('buildParamsFromInputs', () => {
     const params = buildParamsFromInputs(inputDefs, inputs);
     expect(params.status).toBe('TRUE');
   });
+
+  it('builds IN predicates for multi-select dropdowns', () => {
+    const inputDefs = {
+      region: {
+        visual_mode: 'dropdown',
+        multiple: true,
+        expression_template: 'region IN (?)',
+        all_label: 'ALL',
+        all_expression: 'TRUE',
+      },
+    };
+
+    const params = buildParamsFromInputs(inputDefs, { region: ['emea', 'na'] });
+    expect(params.region).toBe("region IN ('emea', 'na')");
+  });
+
+  it('treats empty multi-select dropdowns as ALL', () => {
+    const inputDefs = {
+      region: {
+        visual_mode: 'dropdown',
+        multiple: true,
+        expression_template: 'region IN (?)',
+        all_label: 'ALL',
+        all_expression: 'TRUE',
+      },
+    };
+
+    const params = buildParamsFromInputs(inputDefs, { region: [] });
+    expect(params.region).toBe('TRUE');
+  });
 });
 
 describe('substituteParams', () => {
