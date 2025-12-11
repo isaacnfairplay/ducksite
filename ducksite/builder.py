@@ -14,6 +14,7 @@ import cgi
 import shutil
 import socketserver
 import threading
+import time
 from email.utils import parsedate_to_datetime
 
 from .config import load_project_config, ProjectConfig
@@ -156,6 +157,16 @@ def _write_sitemap(site_root: Path, all_pages: List[Path]) -> None:
     print(f"[ducksite] wrote sitemap {out}")
 
 
+def _log_step_start(label: str) -> float:
+    print(f"[ducksite] {label}...")
+    return time.perf_counter()
+
+
+def _log_step_end(label: str, start: float) -> None:
+    elapsed = time.perf_counter() - start
+    print(f"[ducksite] {label} in {elapsed:.2f}s")
+
+
 def _build_page_html(
     nav_html: str,
     body_inner_html: str,
@@ -271,32 +282,50 @@ def _build_global_queries(
 
 
 def build_project(root: Path) -> None:
+    build_started = time.perf_counter()
     cfg: ProjectConfig = load_project_config(root)
+    print(
+        f"[ducksite] building project rooted at {cfg.root} with site output {cfg.site_root}"
+    )
 
+    step = _log_step_start("cleaning site directory")
     _clean_site(cfg.site_root)
+    _log_step_end("cleaned site directory", step)
+
+    step = _log_step_start("ensuring JS/CSS assets")
     ensure_js_assets(root, cfg.site_root)
+    _log_step_end("ensured JS/CSS assets", step)
 
     # Build the virtual data_map.json for all file_sources; no real symlinks/copies.
+    step = _log_step_start("building data map and virtual symlinks")
     build_symlinks(cfg)
+    _log_step_end("built data map and virtual symlinks", step)
 
     # Ensure stub CSVs exist for any form targets (e.g. forms/feedback.csv) so that
     # build-time EXPLAINs over read_csv_auto(...) can succeed.
+    step = _log_step_start("ensuring form target CSV stubs")
     ensure_form_target_csvs(cfg)
+    _log_step_end("ensured form target CSV stubs", step)
 
+    step = _log_step_start("loading file source and model queries")
     named_queries: Dict[str, NamedQuery] = {}
     named_queries.update(build_file_source_queries(cfg))
     named_queries.update(load_model_queries(cfg))
+    _log_step_end(f"loaded {len(named_queries)} named queries", step)
 
     all_md: List[Path] = []
     if cfg.content_dir.exists():
+        step = _log_step_start("discovering markdown content")
         for md_path in cfg.content_dir.rglob("*.md"):
             all_md.append(md_path.relative_to(cfg.content_dir))
+        _log_step_end(f"found {len(all_md)} markdown files", step)
 
     con = duckdb.connect()
     try:
         if not cfg.content_dir.exists():
             print(f"[ducksite] content dir not found: {cfg.content_dir}")
         else:
+            step = _log_step_start(f"building {len(all_md)} markdown pages")
             for md_path in cfg.content_dir.rglob("*.md"):
                 rel = md_path.relative_to(cfg.content_dir)
                 page_rel_dir = rel.parent
@@ -331,16 +360,23 @@ def build_project(root: Path) -> None:
                 )
                 html_path.write_text(full_html, encoding="utf-8")
                 print(f"[ducksite] wrote {html_path}")
+            _log_step_end("finished building markdown pages", step)
 
+        global_step = _log_step_start("compiling global SQL views")
         _build_global_queries(cfg, con, named_queries)
+        _log_step_end("compiled global SQL views", global_step)
     finally:
         try:
             con.close()
         except Exception:
             pass
 
+    sitemap_step = _log_step_start("writing sitemap")
     _write_sitemap(cfg.site_root, all_md)
-    print("[ducksite] build complete.")
+    _log_step_end("wrote sitemap", sitemap_step)
+
+    build_elapsed = time.perf_counter() - build_started
+    print(f"[ducksite] build complete in {build_elapsed:.2f}s.")
 
 
 def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> None:
