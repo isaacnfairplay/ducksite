@@ -20,7 +20,21 @@ export async function ensureHttpfs(conn) {
     return;
   }
   console.debug("[ducksite] initDuckDB: enabling httpfs with metadata cache");
+
+  // First, try to INSTALL httpfs (safe even if already installed)
+  try {
+    await conn.query("INSTALL httpfs;");
+  } catch (e) {
+    console.warn(
+      "[ducksite] ensureHttpfs: INSTALL httpfs failed (may already be installed):",
+      e,
+    );
+  }
+
+  // Then LOAD it
   await conn.query("LOAD httpfs;");
+
+  // Enable metadata cache
   await conn.query("SET enable_http_metadata_cache=true;");
   duckdbHttpfsConfigured = true;
 }
