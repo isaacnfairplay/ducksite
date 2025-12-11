@@ -76,7 +76,11 @@ def _rewrite_virtual_paths_for_explain(site_root: Path, sql: str) -> str:
     This does NOT affect the compiled SQL written to static/sql/*.sql, which
     still uses HTTP-visible 'data/...' paths for DuckDB-Wasm.
     """
-    shard_hints = [data_map_shard(p) for p in _find_read_parquet_paths(sql)]
+    parquet_paths = _find_read_parquet_paths(sql)
+    if not parquet_paths:
+        return sql
+
+    shard_hints = [data_map_shard(p) for p in parquet_paths]
     data_map = _load_data_map_for_explain(site_root, shard_hints)
     if not data_map:
         return sql
@@ -273,6 +277,7 @@ def compile_query(
     if top_name not in queries:
         raise KeyError(f"Unknown query {top_name}")
 
+    print(f"[ducksite] compiling query '{top_name}'")
     base_sql, parser_warnings = _apply_parser_hints(queries[top_name].sql)
     for warning in parser_warnings:
         print(f"[ducksite] ParserWarning: {warning}")
@@ -307,6 +312,11 @@ def compile_query(
             dep_names = list(ctes.keys())
             # Return the ORIGINAL SQL (with templates + virtual paths) so the
             # browser runtime can still parameterise it and use httpfs.
+            print(
+                "[ducksite] compiled "
+                f"'{top_name}' with {len(dep_names)} deps "
+                f"(files={metrics.num_files}, bytes={metrics.total_bytes_cold}, sql_bytes={metrics.sql_bytes})"
+            )
             return sql_with_ctes, metrics, dep_names
         except duckdb.Error as e:
             missing = _parse_missing_table(e)
@@ -345,6 +355,9 @@ def compile_query(
 
             # Inject the missing dependency as a CTE, prepending it so base
             # models appear before dependents.
+            print(
+                f"[ducksite] resolving dependency '{missing}' for '{top_name}'"
+            )
             ctes = {missing: missing_q.sql, **ctes}
 
 

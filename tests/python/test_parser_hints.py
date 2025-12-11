@@ -49,3 +49,20 @@ def test_compile_query_prints_parser_warning_on_autofix(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "ParserWarning" in captured.out
     assert "ASOF JOIN" in sql
+
+
+def test_compile_query_logs_dependencies_and_metrics(tmp_path, capsys):
+    con = duckdb.connect()
+
+    queries = {
+        "base": NamedQuery(name="base", sql="SELECT 1 AS value", kind="model"),
+        "top": NamedQuery(name="top", sql="SELECT * FROM base", kind="model"),
+    }
+
+    compile_query(tmp_path, con, queries, "top")
+
+    captured = capsys.readouterr().out
+
+    assert "compiling query 'top'" in captured
+    assert "resolving dependency 'base'" in captured
+    assert "compiled 'top' with 1 deps" in captured
