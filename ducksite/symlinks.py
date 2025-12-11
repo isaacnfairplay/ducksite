@@ -106,6 +106,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     site_root = cfg.site_root
     ensure_dir(site_root)
 
+    print("[ducksite] data map: computing fingerprint")
     fingerprint = _file_source_fingerprint(cfg)
     existing_fp = _load_existing_fingerprint(site_root)
     sqlite_path = data_map_sqlite_path(site_root)
@@ -139,12 +140,19 @@ def build_symlinks(cfg: ProjectConfig) -> None:
 
     for fs in cfg.file_sources:
         if fs.plugin:
+            print(
+                f"[ducksite] data map: loading plugin manifest for {fs.name or '<unnamed>'}"
+            )
             manifest = load_virtual_parquet_manifest(fs.plugin, cfg)
             ingest_manifest(fs, fs.name, manifest)
             continue
 
         if not fs.upstream_glob:
             continue
+
+        print(
+            f"[ducksite] data map: scanning upstream files for {fs.name or '<unnamed>'}"
+        )
 
         # Treat upstream_glob as absolute if it is an absolute/UNC path;
         # otherwise interpret it relative to the project root.
@@ -201,6 +209,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
             data_map[key] = str(src)
 
     # Write the virtual symlink map for the HTTP server.
+    print("[ducksite] data map: writing sqlite index")
     _write_sqlite_map(site_root, data_map)
     write_row_filter_meta(site_root, row_filters, fingerprint=fingerprint)
     print(f"[ducksite] wrote virtual data map ({len(data_map)} entries)")
