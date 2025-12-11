@@ -1658,6 +1658,8 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
 
   const inputDefs = pageConfig.inputs || {};
   const params = buildParamsFromInputs(inputDefs, inputs);
+  const pageQueries = pageConfig.queries || {};
+  const hasQueryManifest = Object.keys(pageQueries).length > 0;
 
   const queryCache = new Map();
   const charts = [];
@@ -1678,6 +1680,23 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
     const cacheKey = `${basePath}${id}::${JSON.stringify(chartFormatSpec || {})}::${JSON.stringify(
       tableFormatSpec || {},
     )}`;
+
+    const isGlobal = typeof queryId === "string" && queryId.startsWith("global:");
+    const isTemplated = typeof queryId === "string" && queryId.includes("${inputs.");
+    if (!isGlobal && !isTemplated && hasQueryManifest) {
+      const known = Object.prototype.hasOwnProperty.call(pageQueries, id);
+      if (!known) {
+        console.warn(
+          "[ducksite] runQuery: skipping unknown page query",
+          id,
+          "known ids:",
+          Object.keys(pageQueries),
+        );
+        queryCache.set(cacheKey, []);
+        return [];
+      }
+    }
+
     if (queryCache.has(cacheKey)) {
       console.debug("[ducksite] runQuery: cache hit", id);
       return queryCache.get(cacheKey);
@@ -1728,6 +1747,14 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
             charts.push(chartInstance);
           }
         } else {
+          if (
+            !Object.prototype.hasOwnProperty.call(tableSpecs, cellId) &&
+            Object.prototype.hasOwnProperty.call(inputDefs, cellId)
+          ) {
+            console.debug("[ducksite] renderAll: skipping input-only grid cell", cellId);
+            continue;
+          }
+
           const tableSpec = tableSpecs[cellId] || {};
           const queryId = tableSpec.query || cellId;
           const selector = `.${CLASS.tableContainer}[${DATA.tableId}="${cellId}"]`;
