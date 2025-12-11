@@ -58,6 +58,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Port for 'serve' (default 8080).",
     )
     parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host interface for 'serve' (default 127.0.0.1, use 0.0.0.0 to listen on all).",
+    )
+    parser.add_argument(
         "--server",
         choices=["builtin", "uvicorn"],
         default="builtin",
@@ -94,7 +100,13 @@ def main() -> None:
         else:
             build_project(root, clean=args.clean)
     elif args.command == "serve":
-        serve_project(root, port=args.port, backend=args.server, clean=args.clean)
+        serve_project(
+            root,
+            port=args.port,
+            backend=args.server,
+            clean=args.clean,
+            host=args.host,
+        )
 
 
 if __name__ == "__main__":

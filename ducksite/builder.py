@@ -482,7 +482,11 @@ def build_project(root: Path, clean: bool = False) -> None:
 
 
 def serve_project(
-    root: Path, port: int = 8080, backend: str = "builtin", clean: bool = False
+    root: Path,
+    port: int = 8080,
+    backend: str = "builtin",
+    clean: bool = False,
+    host: str = "127.0.0.1",
 ) -> None:
     """
     Serve the built site with a simple HTTP server and a background watcher.
@@ -505,7 +509,7 @@ def serve_project(
     if backend == "uvicorn":
         from .fast_server import serve_fast
 
-        serve_fast(cfg, port=port)
+        serve_fast(cfg, port=port, host=host)
         return
 
     directory = str(cfg.site_root)
@@ -774,8 +778,11 @@ def serve_project(
     def handler(*args: Any, **kwargs: Any) -> DucksiteRequestHandler:
         return DucksiteRequestHandler(*args, directory=directory, **kwargs)
 
-    with ThreadingHTTPServer(("0.0.0.0", port), handler) as httpd:
-        print(f"[ducksite] serving {directory} at http://localhost:{port}/ (builtin threaded)")
+    with ThreadingHTTPServer((host, port), handler) as httpd:
+        display_host = "localhost" if host in {"127.0.0.1", "::1", "localhost"} else host
+        print(
+            f"[ducksite] serving {directory} at http://{display_host}:{port}/ (builtin threaded)"
+        )
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
