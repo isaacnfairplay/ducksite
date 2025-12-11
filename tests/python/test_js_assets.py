@@ -1,5 +1,7 @@
+import os
 from pathlib import Path
 import sys
+from importlib import resources
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -61,3 +63,23 @@ def test_ensure_js_assets_does_not_rename_assets(tmp_path: Path) -> None:
         assert (js_root / name).is_file()
     for name in ["ducksite.css", "charts.css"]:
         assert (css_root / name).is_file()
+
+
+def test_ensure_js_assets_skips_unchanged_static_files(tmp_path: Path) -> None:
+    site_root = tmp_path / "static"
+    js_root = site_root / "js"
+    css_root = site_root / "css"
+    js_root.mkdir(parents=True)
+    css_root.mkdir(parents=True)
+    (js_root / "echarts.min.js").write_text("// stub", encoding="utf-8")
+
+    main_src = resources.files("ducksite").joinpath("static_src/main.js")
+    with resources.as_file(main_src) as src_path:
+        dest = js_root / src_path.name
+        dest.write_bytes(src_path.read_bytes())
+    os.utime(dest, (1, 1))
+    mtime_before = dest.stat().st_mtime_ns
+
+    ensure_js_assets(tmp_path, site_root)
+
+    assert dest.stat().st_mtime_ns == mtime_before
