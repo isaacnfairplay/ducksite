@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from pathlib import Path
 import glob
 import hashlib
@@ -7,7 +8,6 @@ import sqlite3
 
 from .config import FileSourceConfig, ProjectConfig
 from .data_map_paths import data_map_shard, data_map_sqlite_path
-from .data_map_cache import load_fingerprint
 from .virtual_parquet import (
     VirtualParquetManifest,
     load_virtual_parquet_manifest,
@@ -106,19 +106,12 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     site_root = cfg.site_root
     ensure_dir(site_root)
 
-    scan_cache = _collect_upstream_matches(cfg)
-
-    print("[ducksite] data map: computing fingerprint")
-    fingerprint = _file_source_fingerprint(cfg, scan_cache)
-    existing_fp = _load_existing_fingerprint(site_root)
+    scan_cache = asyncio.run(_collect_upstream_matches(cfg))
     sqlite_path = data_map_sqlite_path(site_root)
-
-    if existing_fp == fingerprint and sqlite_path.exists():
-        print("[ducksite] data map unchanged; reusing existing data_map.sqlite")
-        return
 
     data_map: dict[str, str] = {}
     row_filters: dict[str, str] = {}
+    fingerprints = _file_source_fingerprints(cfg, scan_cache)
 
     def ingest_manifest(
         fs_cfg: FileSourceConfig | None, fs_name: str | None, manifest: VirtualParquetManifest
@@ -228,7 +221,7 @@ def build_symlinks(cfg: ProjectConfig) -> None:
     # Write the virtual symlink map for the HTTP server.
     print("[ducksite] data map: writing sqlite index")
     _write_sqlite_map(site_root, data_map)
-    write_row_filter_meta(site_root, row_filters, fingerprint=fingerprint)
+    write_row_filter_meta(site_root, row_filters, fingerprints=fingerprints)
     print(f"[ducksite] wrote virtual data map ({len(data_map)} entries)")
 
 
@@ -241,17 +234,13 @@ if __name__ == "__main__":
     print("Virtual data map built at", data_map_sqlite_path(cfg.site_root))
 
 
-def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, object]]:
-    matches_by_fs: dict[int, dict[str, object]] = {}
-    for fs in cfg.file_sources:
-        if not fs.upstream_glob:
-            continue
-
-        up = Path(fs.upstream_glob)
+async def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, object]]:
+    async def _collect(fs: FileSourceConfig) -> tuple[int, dict[str, object]]:
+        up = Path(fs.upstream_glob)  # type: ignore[arg-type]
         pattern = str(up) if up.is_absolute() else str(cfg.root / up)
 
         try:
-            matches = glob.glob(pattern)
+            matches = await asyncio.to_thread(glob.glob, pattern)
             error = False
         except OSError as e:
             print(
@@ -261,24 +250,27 @@ def _collect_upstream_matches(cfg: ProjectConfig) -> dict[int, dict[str, object]
             matches = []
             error = True
 
-        matches_by_fs[id(fs)] = {"pattern": pattern, "matches": matches, "error": error}
+        return id(fs), {"pattern": pattern, "matches": matches, "error": error}
 
-    return matches_by_fs
+    tasks = [_collect(fs) for fs in cfg.file_sources if fs.upstream_glob]
+    if not tasks:
+        return {}
+
+    results = await asyncio.gather(*tasks)
+    return {fs_id: data for fs_id, data in results}
 
 
-def _file_source_fingerprint(
-    cfg: ProjectConfig, upstream_matches: dict[int, dict[str, object]] | None = None
-) -> str:
-    payload: list[dict[str, object]] = []
-    for fs in cfg.file_sources:
-        upstream_state: list[str] | None = None
+def _file_source_fingerprints(
+    cfg: ProjectConfig, upstream_matches: dict[int, dict[str, object]] | None
+) -> dict[str, str]:
+    fingerprints: dict[str, str] = {}
+
+    for idx, fs in enumerate(cfg.file_sources):
+        matches: list[str] | None = None
         if fs.upstream_glob:
-            matches: list[str] | None = None
-            if upstream_matches is not None:
-                cached = upstream_matches.get(id(fs))
-                if cached is not None:
-                    matches = cached.get("matches") or []
-
+            cached = upstream_matches.get(id(fs)) if upstream_matches else None
+            if cached is not None:
+                matches = cached.get("matches") or []
             if matches is None:
                 up = Path(fs.upstream_glob)
                 pattern = str(up) if up.is_absolute() else str(cfg.root / up)
@@ -286,34 +278,35 @@ def _file_source_fingerprint(
                     matches = glob.glob(pattern)
                 except OSError:
                     matches = []
-
-            upstream_state = sorted(
+        upstream_state = (
+            sorted(
                 str(Path(src_path_str))
-                for src_path_str in matches
+                for src_path_str in matches or []
                 if Path(src_path_str).is_file()
             )
-
-        payload.append(
-            {
-                "name": fs.name,
-                "pattern": fs.pattern,
-                "upstream_glob": fs.upstream_glob,
-                "plugin": fs.plugin,
-                "template_name": fs.template_name,
-                "row_filter": fs.row_filter,
-                "row_filter_template": fs.row_filter_template,
-                "hierarchy_before": [h.__dict__ for h in fs.hierarchy_before],
-                "hierarchy": [h.__dict__ for h in fs.hierarchy],
-                "hierarchy_after": [h.__dict__ for h in fs.hierarchy_after],
-                "upstream_state": upstream_state,
-            }
+            if matches is not None
+            else None
         )
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+        payload = {
+            "name": fs.name,
+            "pattern": fs.pattern,
+            "upstream_glob": fs.upstream_glob,
+            "plugin": fs.plugin,
+            "template_name": fs.template_name,
+            "row_filter": fs.row_filter,
+            "row_filter_template": fs.row_filter_template,
+            "hierarchy_before": [h.__dict__ for h in fs.hierarchy_before],
+            "hierarchy": [h.__dict__ for h in fs.hierarchy],
+            "hierarchy_after": [h.__dict__ for h in fs.hierarchy_after],
+            "upstream_state": upstream_state,
+        }
 
-def _load_existing_fingerprint(site_root: Path) -> str | None:
-    return load_fingerprint(site_root)
+        fs_key = fs.name or f"fs_{idx}"
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        fingerprints[fs_key] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    return fingerprints
 
 
 def _write_sqlite_map(site_root: Path, data_map: dict[str, str]) -> None:

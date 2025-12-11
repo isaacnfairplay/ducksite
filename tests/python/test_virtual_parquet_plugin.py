@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ducksite.data_map_cache import load_data_map, load_fingerprint, load_row_filters
+from ducksite.data_map_cache import load_data_map, load_fingerprints, load_row_filters
 from ducksite.data_map_paths import data_map_sqlite_path
 from ducksite.config import load_project_config
 from ducksite.queries import build_file_source_queries
@@ -171,4 +171,5 @@ def test_blank_plugin_scaffold_is_loadable(tmp_path: Path) -> None:
     data_map_path = data_map_sqlite_path(cfg.site_root)
     assert data_map_path.exists()
     assert load_data_map(cfg.site_root) == {}
-    assert load_fingerprint(cfg.site_root)
+    fingerprints = load_fingerprints(cfg.site_root)
+    assert fingerprints == {"blank": fingerprints.get("blank")}

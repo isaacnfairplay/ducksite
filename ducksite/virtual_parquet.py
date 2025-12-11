@@ -136,7 +136,7 @@ def load_virtual_parquet_manifest(plugin_ref: str, cfg: ProjectConfig) -> Virtua
 
 
 def write_row_filter_meta(
-    site_root: Path, filters: dict[str, str], fingerprint: str | None = None
+    site_root: Path, filters: dict[str, str], fingerprints: dict[str, str] | None = None
 ) -> None:
     sqlite_path = data_map_sqlite_path(site_root)
     ensure_dir(sqlite_path.parent)
@@ -153,11 +153,11 @@ def write_row_filter_meta(
                 "INSERT INTO row_filters (http_path, filter) VALUES (?, ?)",
                 ((str(k), str(v)) for k, v in filters.items()),
             )
-        con.execute("DELETE FROM meta WHERE key = 'fingerprint'")
-        if fingerprint:
-            con.execute(
-                "INSERT INTO meta (key, value) VALUES ('fingerprint', ?)",
-                (fingerprint,),
+        con.execute("DELETE FROM meta")
+        if fingerprints:
+            con.executemany(
+                "INSERT INTO meta (key, value) VALUES (?, ?)",
+                ((f"fingerprint:{k}", v) for k, v in fingerprints.items()),
             )
         con.commit()
     finally:

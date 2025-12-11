@@ -20,7 +20,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from ducksite import demo_init_fake_parquet, js_assets
 from ducksite.builder import _clean_site, build_project, serve_project
 from ducksite.config import FileSourceConfig, ProjectConfig
-from ducksite.data_map_cache import load_data_map, load_fingerprint
+from ducksite.data_map_cache import load_data_map, load_fingerprints
 from ducksite.data_map_paths import data_map_dir, data_map_sqlite_path
 from ducksite.init_project import init_demo_project, init_project
 from ducksite.sternum import AssetPath, Scheme
@@ -215,10 +215,11 @@ def test_symlinks_map_upstream_files(tmp_path: Path) -> None:
     assert set(data_map.keys()) == expected_keys
     for value in data_map.values():
         assert value.startswith(str(upstream))
-    assert load_fingerprint(cfg.site_root)
+    fingerprints = load_fingerprints(cfg.site_root)
+    assert fingerprints.get("demo")
 
 
-def test_symlinks_skips_rebuild_when_fingerprint_matches(tmp_path: Path) -> None:
+def test_symlinks_rebuilds_each_run(tmp_path: Path) -> None:
     upstream = tmp_path / "upstream"
     (upstream / "cat1").mkdir(parents=True, exist_ok=True)
     (upstream / "cat1" / "first.parquet").write_text("demo", encoding="utf-8")
@@ -234,14 +235,15 @@ def test_symlinks_skips_rebuild_when_fingerprint_matches(tmp_path: Path) -> None
 
     sqlite_path = data_map_sqlite_path(cfg.site_root)
     assert sqlite_path.exists()
-    assert load_fingerprint(cfg.site_root)
+    fingerprints = load_fingerprints(cfg.site_root)
+    assert fingerprints.get("demo")
 
     first_mtime = sqlite_path.stat().st_mtime
     time.sleep(1.0)
 
     build_symlinks(cfg)
 
-    assert sqlite_path.stat().st_mtime == first_mtime
+    assert sqlite_path.stat().st_mtime > first_mtime
     assert sqlite_path.exists()
 
 
@@ -261,7 +263,7 @@ def test_symlinks_rebuilds_when_upstream_changes(tmp_path: Path) -> None:
 
     sqlite_path = data_map_sqlite_path(cfg.site_root)
     first_mtime = sqlite_path.stat().st_mtime
-    first_meta = load_fingerprint(cfg.site_root)
+    first_meta = load_fingerprints(cfg.site_root)
 
     time.sleep(1.0)
     (upstream / "cat1" / "second.parquet").write_text("demo2", encoding="utf-8")
@@ -269,11 +271,11 @@ def test_symlinks_rebuilds_when_upstream_changes(tmp_path: Path) -> None:
     build_symlinks(cfg)
 
     refreshed = load_data_map(cfg.site_root)
-    refreshed_meta = load_fingerprint(cfg.site_root)
+    refreshed_meta = load_fingerprints(cfg.site_root)
 
     assert sqlite_path.stat().st_mtime > first_mtime
     assert sqlite_path.exists()
-    assert refreshed_meta != first_meta
+    assert refreshed_meta.get("demo") != first_meta.get("demo")
     assert set(refreshed) == {
         f"data/demo/cat1/{name}" for name in ["first.parquet", "second.parquet"]
     }

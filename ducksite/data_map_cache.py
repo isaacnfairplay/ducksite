@@ -80,31 +80,33 @@ def load_row_filters(site_root: Path) -> Dict[str, str]:
 
 
 @lru_cache(maxsize=8)
-def _load_fingerprint_cached(
+def _load_fingerprints_cached(
     site_root: Path, sqlite_mtime: float | None
-) -> str | None:
+) -> Dict[str, str]:
     sqlite_path = data_map_sqlite_path(site_root)
     if sqlite_mtime is None or not sqlite_path.exists():
-        return None
+        return {}
 
     try:
         con = sqlite3.connect(sqlite_path)
-        row = con.execute(
-            "SELECT value FROM meta WHERE key = 'fingerprint'"
-        ).fetchone()
+        rows = con.execute(
+            "SELECT key, value FROM meta WHERE key LIKE 'fingerprint:%'"
+        ).fetchall()
         con.close()
-        return str(row[0]) if row else None
+        return {
+            str(k).split("fingerprint:", 1)[1]: str(v) for k, v in rows if str(k).startswith("fingerprint:")
+        }
     except sqlite3.Error as e:
-        print(f"[ducksite] WARNING: failed to read fingerprint from {sqlite_path}: {e}")
-    return None
+        print(f"[ducksite] WARNING: failed to read fingerprints from {sqlite_path}: {e}")
+    return {}
 
 
-def load_fingerprint(site_root: Path) -> str | None:
+def load_fingerprints(site_root: Path) -> Dict[str, str]:
     sqlite_mtime = _data_map_signature(site_root)
-    return _load_fingerprint_cached(site_root, sqlite_mtime)
+    return _load_fingerprints_cached(site_root, sqlite_mtime)
 
 
 def clear_cache() -> None:
     _load_data_map_cached.cache_clear()
     _load_row_filters_cached.cache_clear()
-    _load_fingerprint_cached.cache_clear()
+    _load_fingerprints_cached.cache_clear()
