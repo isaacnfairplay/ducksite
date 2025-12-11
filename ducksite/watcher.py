@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Dict
 import time
@@ -23,9 +24,9 @@ def _snapshot_paths(root: Path) -> Dict[Path, float]:
     return watched
 
 
-def watch_and_build(root: Path, interval: float = 2.0) -> None:
+def watch_and_build(root: Path, interval: float = 2.0, clean: bool = False) -> None:
     print("[ducksite] initial build")
-    build_project(root)
+    build_project(root, clean=clean)
     prev = _snapshot_paths(root)
     print("[ducksite] watching for changes... (Ctrl+C to stop)")
     while True:

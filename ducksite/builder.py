@@ -174,6 +174,32 @@ def _write_sitemap(site_root: Path, all_pages: List[Path]) -> None:
     print(f"[ducksite] wrote sitemap {out}")
 
 
+def _prune_deleted_markdown(cfg: ProjectConfig, current_md: set[Path]) -> None:
+    if not cfg.site_root.exists():
+        return
+
+    for html_path in cfg.site_root.rglob("*.html"):
+        rel_html = html_path.relative_to(cfg.site_root)
+        # Skip non-content outputs (e.g. SQL, data, forms)
+        if rel_html.parts and rel_html.parts[0] in {"sql", "data", "forms"}:
+            continue
+
+        rel_md = rel_html.with_suffix(".md")
+        if rel_md in current_md:
+            continue
+
+        try:
+            html_path.unlink()
+            print(f"[ducksite] removed stale page {html_path}")
+        except FileNotFoundError:
+            continue
+
+        # Remove any page-local SQL outputs for the deleted page.
+        sql_dir = cfg.site_root / "sql" / rel_md.parent
+        if sql_dir.exists() and sql_dir.is_dir() and sql_dir.name != "_global":
+            shutil.rmtree(sql_dir)
+
+
 def _log_step_start(label: str) -> float:
     print(f"[ducksite] {label}...")
     return time.perf_counter()
@@ -324,7 +350,7 @@ def _build_global_queries(
     print(f"[ducksite] wrote SQL manifest {manifest_path}")
 
 
-def build_project(root: Path) -> None:
+def build_project(root: Path, clean: bool = False) -> None:
     build_started = time.perf_counter()
     cfg: ProjectConfig = load_project_config(root)
     print(
@@ -333,9 +359,10 @@ def build_project(root: Path) -> None:
 
     compile_cache: Dict[str, Dict[str, object]] = load_compile_cache(cfg.root)
 
-    step = _log_step_start("cleaning site directory")
-    _clean_site(cfg.site_root)
-    _log_step_end("cleaned site directory", step)
+    if clean:
+        step = _log_step_start("cleaning site directory")
+        _clean_site(cfg.site_root)
+        _log_step_end("cleaned site directory", step)
 
     step = _log_step_start("ensuring JS/CSS assets")
     ensure_js_assets(root, cfg.site_root)
@@ -366,6 +393,10 @@ def build_project(root: Path) -> None:
         for md_path in cfg.content_dir.rglob("*.md"):
             all_md.append(md_path.relative_to(cfg.content_dir))
         _log_step_end(f"found {len(all_md)} markdown files", step)
+
+    step = _log_step_start("pruning deleted markdown outputs")
+    _prune_deleted_markdown(cfg, set(all_md))
+    _log_step_end("pruned deleted markdown outputs", step)
 
     con = duckdb.connect()
     try:
@@ -450,7 +481,9 @@ def build_project(root: Path) -> None:
     print(f"[ducksite] build complete in {build_elapsed:.2f}s.")
 
 
-def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> None:
+def serve_project(
+    root: Path, port: int = 8080, backend: str = "builtin", clean: bool = False
+) -> None:
     """
     Serve the built site with a simple HTTP server and a background watcher.
 
@@ -464,7 +497,7 @@ def serve_project(root: Path, port: int = 8080, backend: str = "builtin") -> Non
     forms_map = discover_forms(cfg)
 
     def watch_loop() -> None:
-        watch_and_build(root, interval=2.0)
+        watch_and_build(root, interval=2.0, clean=clean)
 
     t = threading.Thread(target=watch_loop, daemon=True)
     t.start()
