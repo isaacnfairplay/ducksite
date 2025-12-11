@@ -284,6 +284,8 @@ def build_file_source_queries(
 
     try:
         for fs in cfg.file_sources:
+            data_map: Optional[dict[str, str]] = None
+
             hierarchy_levels = (
                 fs.hierarchy_before
                 + (fs.hierarchy or [FileSourceHierarchy(pattern=fs.pattern)])
@@ -295,8 +297,10 @@ def build_file_source_queries(
             for level in hierarchy_levels:
                 rel_paths: List[str] = []
 
-                if fs.name:
+                if fs.name and data_map is None:
                     data_map = _load_data_map(site_root, shard=fs.name)
+
+                if data_map and fs.name:
                     prefix = f"data/{fs.name}/"
                     for key in data_map.keys():
                         if key.startswith(prefix) and fnmatch.fnmatch(key, level.pattern):
