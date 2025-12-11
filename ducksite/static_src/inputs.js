@@ -1,6 +1,26 @@
 // ducksite/static_src/inputs.js
 // Verbose logging for URL <-> inputs mapping.
 
+export function isMultiple(def = {}) {
+  const raw = def.multiple ?? def.multi;
+  if (typeof raw === "boolean") return raw;
+  if (raw === undefined || raw === null) return false;
+  return String(raw).toLowerCase() === "true";
+}
+
+export function normalizeMultiValues(raw) {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((v) => v !== undefined && v !== null)
+      .map((v) => String(v));
+  }
+  if (raw === null || raw === undefined || raw === "") return [];
+  return String(raw)
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v !== "");
+}
+
 export function initInputsFromUrl(inputDefs) {
   const inputs = {};
   const sp = new URLSearchParams(window.location.search);
@@ -10,12 +30,19 @@ export function initInputsFromUrl(inputDefs) {
 
   for (const [name, def] of Object.entries(inputDefs)) {
     const key = def.url_key || def["url-key"] || name;
-    const raw = sp.get(key);
-    let value = raw;
-    if (raw === null || raw === "") {
-      value = def.default ?? null;
+    const multiple = isMultiple(def);
+    const raw = multiple ? sp.getAll(key) : sp.get(key);
+    if (multiple) {
+      const flattened = raw.flatMap((v) => normalizeMultiValues(v));
+      const value = flattened.length ? flattened : normalizeMultiValues(def.default);
+      inputs[name] = value;
+    } else {
+      let value = raw;
+      if (raw === null || raw === "") {
+        value = def.default ?? null;
+      }
+      inputs[name] = value;
     }
-    inputs[name] = value;
   }
 
   console.debug("[ducksite] initInputsFromUrl: initial inputs", inputs);
@@ -45,6 +72,7 @@ function syncInputsToUrl(inputs, inputDefs) {
   for (const [name, def] of Object.entries(inputDefs)) {
     const key = def.url_key || def["url-key"] || name;
     const value = inputs[name];
+    const multiple = isMultiple(def);
 
     const empty =
       value === undefined ||
@@ -55,7 +83,11 @@ function syncInputsToUrl(inputs, inputDefs) {
     const sameAsDefault = value === def.default;
 
     if (!empty && !sameAsDefault) {
-      sp.set(key, String(value));
+      if (multiple && Array.isArray(value)) {
+        sp.set(key, value.join(","));
+      } else {
+        sp.set(key, String(value));
+      }
     }
   }
 
