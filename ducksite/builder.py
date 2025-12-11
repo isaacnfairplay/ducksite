@@ -4,6 +4,7 @@ from enum import StrEnum
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, IO, List, cast
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import duckdb
 import gzip
@@ -15,6 +16,8 @@ import shutil
 import socketserver
 import threading
 import time
+import os
+from queue import SimpleQueue
 from email.utils import parsedate_to_datetime
 
 from .config import load_project_config, ProjectConfig
@@ -304,10 +307,13 @@ def _build_global_queries(
     manifest: Dict[str, Dict[str, object]] = {}
 
     sql_hash = _all_sql_hash(named_queries)
+    signature = cache_signature(sql_hash, fingerprint_token)
+
+    to_compile: list[str] = []
+    compiled_results: Dict[str, tuple[str, NetworkMetrics, list[str]]] = {}
 
     for name, nq in named_queries.items():
         try:
-            signature = cache_signature(sql_hash, fingerprint_token)
             cached = compile_cache.get(name)
 
             if cached and cached.get("signature") == signature:
@@ -316,7 +322,14 @@ def _build_global_queries(
                 if isinstance(cached_metrics, dict) and isinstance(cached_sql, str):
                     metrics = NetworkMetrics(**cached_metrics)
                     deps = [str(d) for d in cached.get("deps", [])]
-                    out_path = write_compiled_sql(site_root, global_rel, name, cached_sql, metrics)
+                    out_path = write_compiled_sql(
+                        site_root,
+                        global_rel,
+                        name,
+                        cached_sql,
+                        metrics,
+                        include_metrics_header=False,
+                    )
                     print(f"[ducksite] reused cached SQL for '{name}'")
                     rel = out_path.relative_to(site_root).as_posix()
                     sql_path = "/" + rel
@@ -324,17 +337,60 @@ def _build_global_queries(
                         "kind": nq.kind,
                         "deps": deps,
                         "sql_path": sql_path,
+                        "num_files": metrics.num_files,
                     }
                     continue
 
-            compiled_sql, metrics, deps = compile_query(site_root, con, named_queries, name)
+            to_compile.append(name)
         except Exception as e:
             print(f"[ducksite] ERROR compiling global query '{name}': {e}")
             raise
 
+    if to_compile:
+        max_workers = min(len(to_compile), max(1, (os.cpu_count() or 1)))
+
+        connection_pool: SimpleQueue[duckdb.DuckDBPyConnection] = SimpleQueue()
+        pooled_connections: list[duckdb.DuckDBPyConnection] = []
+
+        for _ in range(max_workers):
+            con = duckdb.connect()
+            pooled_connections.append(con)
+            connection_pool.put(con)
+
+        def _compile_one(query_name: str) -> tuple[str, str, NetworkMetrics, list[str]]:
+            local_con = connection_pool.get()
+            try:
+                compiled_sql, metrics, deps = compile_query(
+                    site_root, local_con, named_queries, query_name
+                )
+                return query_name, compiled_sql, metrics, deps
+            finally:
+                connection_pool.put(local_con)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {executor.submit(_compile_one, name): name for name in to_compile}
+            for future in as_completed(future_map):
+                q_name, compiled_sql, metrics, deps = future.result()
+                compiled_results[q_name] = (compiled_sql, metrics, deps)
+
+        for con in pooled_connections:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    for name in to_compile:
+        compiled_sql, metrics, deps = compiled_results[name]
         record_compiled_query(compile_cache, name, signature, compiled_sql, metrics, deps)
 
-        out_path = write_compiled_sql(site_root, global_rel, name, compiled_sql, metrics)
+        out_path = write_compiled_sql(
+            site_root,
+            global_rel,
+            name,
+            compiled_sql,
+            metrics,
+            include_metrics_header=False,
+        )
         rel = out_path.relative_to(site_root).as_posix()
         sql_path = "/" + rel  # e.g. "/sql/_global/demo_chain_agg.sql"
 
@@ -342,6 +398,7 @@ def _build_global_queries(
             "kind": nq.kind,
             "deps": deps,
             "sql_path": sql_path,
+            "num_files": metrics.num_files,
         }
 
     manifest_path = site_root / "sql" / "_manifest.json"

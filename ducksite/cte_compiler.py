@@ -344,19 +344,26 @@ def write_compiled_sql(
     query_id: str,
     sql_text: str,
     metrics: NetworkMetrics,
+    *,
+    include_metrics_header: bool = True,
 ) -> Path:
     out_dir = site_root / "sql" / page_rel_path
     ensure_dir(out_dir)
     out_path = out_dir / f"{query_id}.sql"
-    header = (
-        f"-- METRICS: num_files={metrics.num_files} "
-        f"total_bytes_cold={metrics.total_bytes_cold} "
-        f"largest_file_bytes={metrics.largest_file_bytes} "
-        f"two_largest_bytes={metrics.two_largest_bytes} "
-        f"avg_file_bytes={metrics.avg_file_bytes:.2f} "
-        f"sql_bytes={metrics.sql_bytes}\n"
-    )
-    out_path.write_text(header + sql_text + "\n", encoding="utf-8")
+    body = sql_text.rstrip("\n") + "\n"
+
+    if include_metrics_header:
+        header = (
+            f"-- METRICS: num_files={metrics.num_files} "
+            f"total_bytes_cold={metrics.total_bytes_cold} "
+            f"largest_file_bytes={metrics.largest_file_bytes} "
+            f"two_largest_bytes={metrics.two_largest_bytes} "
+            f"avg_file_bytes={metrics.avg_file_bytes:.2f} "
+            f"sql_bytes={metrics.sql_bytes}\n"
+        )
+        body = header + body
+
+    out_path.write_text(body, encoding="utf-8")
     return out_path
 
 
