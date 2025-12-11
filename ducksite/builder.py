@@ -18,8 +18,14 @@ import time
 from email.utils import parsedate_to_datetime
 
 from .config import load_project_config, ProjectConfig
-from .cte_compiler import compile_query, write_compiled_sql
-from .data_map_cache import load_data_map
+from .compile_cache import (
+    cache_signature,
+    load_compile_cache,
+    record_compiled_query,
+    save_compile_cache,
+)
+from .cte_compiler import NetworkMetrics, compile_query, write_compiled_sql
+from .data_map_cache import load_data_map, load_fingerprints
 from .data_map_paths import data_map_shard
 from .html_kit import (
     HtmlTag,
@@ -37,7 +43,7 @@ from .js_assets import ensure_js_assets
 from .markdown_parser import parse_markdown_page, build_page_config
 from .queries import NamedQuery, build_file_source_queries, load_model_queries
 from .symlinks import build_symlinks
-from .utils import ensure_dir
+from .utils import ensure_dir, sha256_list
 from .forms import discover_forms, process_form_submission, ensure_form_target_csvs
 from .auth import update_password
 
@@ -92,6 +98,17 @@ def _clean_site(site_root: Path, preserve_data_maps: bool = True) -> None:
             child.unlink()
 
     ensure_dir(site_root)
+
+
+def _fingerprint_token(site_root: Path) -> str:
+    fps = load_fingerprints(site_root)
+    if not fps:
+        return ""
+    return sha256_list([f"{k}:{v}" for k, v in sorted(fps.items())])
+
+
+def _all_sql_hash(queries: Dict[str, NamedQuery]) -> str:
+    return sha256_list([f"{name}:{q.sql}" for name, q in sorted(queries.items())])
 
 
 def _page_url(section: str | None) -> str:
@@ -246,6 +263,8 @@ def _build_global_queries(
     cfg: ProjectConfig,
     con: duckdb.DuckDBPyConnection,
     named_queries: Dict[str, NamedQuery],
+    compile_cache: Dict[str, Dict[str, object]],
+    fingerprint_token: str,
 ) -> None:
     """
     Compile *all* known NamedQuery entries into global SQL views and
@@ -258,12 +277,36 @@ def _build_global_queries(
     global_rel = Path("_global")
     manifest: Dict[str, Dict[str, object]] = {}
 
+    sql_hash = _all_sql_hash(named_queries)
+
     for name, nq in named_queries.items():
         try:
+            signature = cache_signature(sql_hash, fingerprint_token)
+            cached = compile_cache.get(name)
+
+            if cached and cached.get("signature") == signature:
+                cached_metrics = cached.get("metrics")
+                cached_sql = cached.get("compiled_sql")
+                if isinstance(cached_metrics, dict) and isinstance(cached_sql, str):
+                    metrics = NetworkMetrics(**cached_metrics)
+                    deps = [str(d) for d in cached.get("deps", [])]
+                    out_path = write_compiled_sql(site_root, global_rel, name, cached_sql, metrics)
+                    print(f"[ducksite] reused cached SQL for '{name}'")
+                    rel = out_path.relative_to(site_root).as_posix()
+                    sql_path = "/" + rel
+                    manifest[name] = {
+                        "kind": nq.kind,
+                        "deps": deps,
+                        "sql_path": sql_path,
+                    }
+                    continue
+
             compiled_sql, metrics, deps = compile_query(site_root, con, named_queries, name)
         except Exception as e:
             print(f"[ducksite] ERROR compiling global query '{name}': {e}")
             raise
+
+        record_compiled_query(compile_cache, name, signature, compiled_sql, metrics, deps)
 
         out_path = write_compiled_sql(site_root, global_rel, name, compiled_sql, metrics)
         rel = out_path.relative_to(site_root).as_posix()
@@ -288,6 +331,8 @@ def build_project(root: Path) -> None:
         f"[ducksite] building project rooted at {cfg.root} with site output {cfg.site_root}"
     )
 
+    compile_cache: Dict[str, Dict[str, object]] = load_compile_cache(cfg.root)
+
     step = _log_step_start("cleaning site directory")
     _clean_site(cfg.site_root)
     _log_step_end("cleaned site directory", step)
@@ -300,6 +345,8 @@ def build_project(root: Path) -> None:
     step = _log_step_start("building data map and virtual symlinks")
     build_symlinks(cfg)
     _log_step_end("built data map and virtual symlinks", step)
+
+    fingerprint_token = _fingerprint_token(cfg.site_root)
 
     # Ensure stub CSVs exist for any form targets (e.g. forms/feedback.csv) so that
     # build-time EXPLAINs over read_csv_auto(...) can succeed.
@@ -340,14 +387,36 @@ def build_project(root: Path) -> None:
                     named_queries[qid] = NamedQuery(name=qid, sql=sql, kind="page_query")
 
                 # Compile per-page queries into page-local SQL files.
+                sql_hash = _all_sql_hash(named_queries)
+
                 for qid in pq.sql_blocks.keys():
-                    compiled_sql, metrics, _deps = compile_query(
+                    signature = cache_signature(sql_hash, fingerprint_token)
+                    cached = compile_cache.get(qid)
+
+                    if cached and cached.get("signature") == signature:
+                        cached_metrics = cached.get("metrics")
+                        cached_sql = cached.get("compiled_sql")
+                        if isinstance(cached_metrics, dict) and isinstance(cached_sql, str):
+                            metrics = NetworkMetrics(**cached_metrics)
+                            write_compiled_sql(cfg.site_root, page_rel_dir, qid, cached_sql, metrics)
+                            print(f"[ducksite] reused cached SQL for page query '{qid}'")
+                            continue
+
+                    compiled_sql, metrics, deps = compile_query(
                         cfg.site_root,
                         con,
                         named_queries,
                         qid,
                     )
                     write_compiled_sql(cfg.site_root, page_rel_dir, qid, compiled_sql, metrics)
+                    record_compiled_query(
+                        compile_cache,
+                        qid,
+                        signature,
+                        compiled_sql,
+                        metrics,
+                        deps,
+                    )
 
                 page_cfg_json = build_page_config(pq)
                 nav_html = _build_nav_html(page_rel_dir, all_md)
@@ -363,7 +432,7 @@ def build_project(root: Path) -> None:
             _log_step_end("finished building markdown pages", step)
 
         global_step = _log_step_start("compiling global SQL views")
-        _build_global_queries(cfg, con, named_queries)
+        _build_global_queries(cfg, con, named_queries, compile_cache, fingerprint_token)
         _log_step_end("compiled global SQL views", global_step)
     finally:
         try:
@@ -374,6 +443,8 @@ def build_project(root: Path) -> None:
     sitemap_step = _log_step_start("writing sitemap")
     _write_sitemap(cfg.site_root, all_md)
     _log_step_end("wrote sitemap", sitemap_step)
+
+    save_compile_cache(cfg.root, compile_cache)
 
     build_elapsed = time.perf_counter() - build_started
     print(f"[ducksite] build complete in {build_elapsed:.2f}s.")
