@@ -540,7 +540,8 @@ def _init_models_page(root: Path) -> None:
     models_md = root / "content" / "models" / "index.md"
     content = _render_page(
         "# Models Demo (sources_sql)",
-        "Chained models plus a filtered branch driven by a dropdown.",
+        "Chained models plus a filtered branch driven by a dropdown. The demo also wires the "
+        "demo_plugin_chain plugin so you can pull the same views and file list from a plugin-managed prefix.",
         [
             (
                 "input",

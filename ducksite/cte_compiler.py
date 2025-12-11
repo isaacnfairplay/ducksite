@@ -9,6 +9,8 @@ from .data_map_paths import data_map_shard
 from .queries import NamedQuery, NetworkMetrics
 from .utils import ensure_dir
 
+__all__ = ["compile_query", "write_compiled_sql", "NetworkMetrics", "_find_read_parquet_paths"]
+
 MISSING_TABLE_RE = re.compile(r"Table with name ([^ ]+) does not exist")
 
 
@@ -78,6 +80,7 @@ def _rewrite_virtual_paths_for_explain(site_root: Path, sql: str) -> str:
     """
     parquet_paths = _find_read_parquet_paths(sql)
     if not parquet_paths:
+        _load_data_map_for_explain(site_root, [])
         return sql
 
     shard_hints = [data_map_shard(p) for p in parquet_paths]

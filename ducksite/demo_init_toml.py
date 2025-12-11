@@ -3,7 +3,7 @@ from pathlib import Path
 
 import tomllib
 
-from .demo_init_virtual_plugin import DEMO_PLUGIN_NAME
+from .demo_init_virtual_plugin import CHAIN_PLUGIN_NAME, DEMO_PLUGIN_NAME
 from .tuy_toml import add_file_source_entry, render_config_text
 from .utils import ensure_dir
 
@@ -97,6 +97,25 @@ def init_demo_toml(root: Path) -> None:
         )
     except ValueError:
         print(f"[ducksite:demo] {toml_path} already contains plugin file source, skipping.")
+
+    chain_entry = {
+        "name": CHAIN_PLUGIN_NAME,
+        "pattern": f"data/{CHAIN_PLUGIN_NAME}/**/*.parquet",
+        "plugin": f"plugins/{CHAIN_PLUGIN_NAME}.py",
+    }
+
+    try:
+        rendered = add_file_source_entry(
+            rendered,
+            chain_entry,
+            root,
+            comments=[
+                "ducksite.toml - dummy config for local testing",
+                "Chained plugin example that reuses the demo file list and model views.",
+            ],
+        )
+    except ValueError:
+        print(f"[ducksite:demo] {toml_path} already contains chained plugin entry, skipping.")
 
     hierarchy_entry = {
         "name": "demo_hierarchy",

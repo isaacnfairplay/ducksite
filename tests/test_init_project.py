@@ -50,11 +50,12 @@ def test_init_demo_project_files(tmp_path: Path, monkeypatch) -> None:
         "fake_upstream/demo_hierarchy_window/day/hier-edge-day.parquet",
         "fake_upstream/demo_hierarchy_window/day_end/hier-edge-end.parquet",
         "fake_upstream/demo_hierarchy_window/day_start/hier-edge-start.parquet",
-        "fake_upstream/demo_hierarchy_window/month/hier-edge-month.parquet",
-        "fake_upstream/demo_hierarchy_window/year/hier-edge-year.parquet",
-        "fake_upstream/nytaxi-2023-01.parquet",
-        "plugins/demo_plugin.py",
-    }
+            "fake_upstream/demo_hierarchy_window/month/hier-edge-month.parquet",
+            "fake_upstream/demo_hierarchy_window/year/hier-edge-year.parquet",
+            "fake_upstream/nytaxi-2023-01.parquet",
+            "plugins/demo_plugin.py",
+            "plugins/demo_plugin_chain.py",
+        }
 
     assert _list_files(tmp_path) == expected
 

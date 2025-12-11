@@ -69,6 +69,19 @@ plugin = "plugins/sales_lake.py:build_manifest"  # relative to ducksite.toml
 ```
 Ducksite would call the plugin during build, write the resulting paths into `.ducksite_data/data_map.sqlite`, and compile SQL that reuses all the existing `read_parquet` and templating machinery without any plugin-specific code.
 
+## Chaining existing models and file lists
+Two helper functions make it possible to chain plugins together without repeating globs or rewriting SQL:
+
+- `manifest_from_file_source(cfg, "demo", http_prefix="data/demo_proxy")` reuses whatever is already in the data map for the named file source and remaps the HTTP paths under the chosen prefix. This is the lightest-weight option when you only need the current Parquet list.
+- `manifest_from_model_views(cfg, ["demo_chain_base"], http_prefix="data/demo_proxy/models")` compiles the named model views, finds every `read_parquet('data/...')` reference, and emits a manifest that preserves the per-file mapping. It relies on the in-memory data map that Ducksite builds for the current run, so chained plugins see file sources that were defined earlier in `ducksite.toml`.
+- `manifest_from_parquet_dir(cfg, "./tmp/data", http_prefix="data/scratch", recursive=True)` walks a directory tree with `os.scandir` (to avoid repeated `stat` calls) and surfaces each discovered Parquet file under the provided HTTP prefix while preserving relative paths.
+
+Trade-offs considered:
+
+- **Materialize entire views vs. reusing dependencies.** The helpers stick to enumerating the existing Parquet dependencies so we avoid extra COPY operations and keep the build idempotent.
+- **Fresh data map vs. persisted SQLite.** During a build, the helpers read the live data map that Ducksite is assembling, which lets a plugin chain immediately off a previous file source even before the SQLite cache is written. Outside a build, they fall back to the on-disk map.
+- **Prefix remapping vs. path rewriting.** HTTP paths are remapped by prefixing the relative `data/...` path, preserving nested directories so callers can still address individual partitions.
+
 ## Import and path resolution rules
 - If `plugin` looks like a path (has `/`, `\`, or ends with `.py`), Ducksite loads that file directly with `importlib.util.spec_from_file_location`, temporarily prepending the plugin directory to `sys.path` so sibling imports such as `from helpers import SHARED_CONST` work even when the plugin lives outside the repo.
 - Module-style refs (no slashes) go through `importlib.import_module` with the project root temporarily at the front of `sys.path` so `python -m` style execution matches build-time behaviour.

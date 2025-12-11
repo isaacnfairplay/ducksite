@@ -4,9 +4,19 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict
 
+import contextvars
+from contextlib import contextmanager
 import sqlite3
 
 from .data_map_paths import data_map_shard, data_map_sqlite_path
+
+
+_DATA_MAP_OVERRIDE: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "ducksite_data_map_override", default=None
+)
+_ROW_FILTER_OVERRIDE: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "ducksite_row_filter_override", default=None
+)
 
 
 def _data_map_signature(site_root: Path) -> float | None:
@@ -49,9 +59,16 @@ def load_data_map(site_root: Path, shard_hint: str | None = None) -> Dict[str, s
     repeated full reads during dependency resolution.
     """
 
+    override = _DATA_MAP_OVERRIDE.get()
     shard: str | None = None
     if shard_hint:
         shard = data_map_shard(shard_hint) if "/" in shard_hint else shard_hint
+
+    if override is not None:
+        if shard is None:
+            return dict(override)
+        return {k: v for k, v in override.items() if data_map_shard(k) == shard}
+
     sqlite_mtime = _data_map_signature(site_root)
     return _load_data_map_cached(site_root, sqlite_mtime, shard)
 
@@ -75,6 +92,10 @@ def _load_row_filters_cached(
 
 
 def load_row_filters(site_root: Path) -> Dict[str, str]:
+    override = _ROW_FILTER_OVERRIDE.get()
+    if override is not None:
+        return dict(override)
+
     sqlite_mtime = _data_map_signature(site_root)
     return _load_row_filters_cached(site_root, sqlite_mtime)
 
@@ -110,3 +131,23 @@ def clear_cache() -> None:
     _load_data_map_cached.cache_clear()
     _load_row_filters_cached.cache_clear()
     _load_fingerprints_cached.cache_clear()
+    _DATA_MAP_OVERRIDE.set(None)
+    _ROW_FILTER_OVERRIDE.set(None)
+
+
+@contextmanager
+def override_data_map(data_map: dict[str, str] | None):
+    token = _DATA_MAP_OVERRIDE.set(data_map)
+    try:
+        yield
+    finally:
+        _DATA_MAP_OVERRIDE.reset(token)
+
+
+@contextmanager
+def override_row_filters(row_filters: dict[str, str] | None):
+    token = _ROW_FILTER_OVERRIDE.set(row_filters)
+    try:
+        yield
+    finally:
+        _ROW_FILTER_OVERRIDE.reset(token)
