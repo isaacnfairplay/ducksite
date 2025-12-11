@@ -17,6 +17,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+import ducksite.builder as builder
 from ducksite import demo_init_fake_parquet, js_assets
 from ducksite.builder import _clean_site, build_project, serve_project
 from ducksite.config import FileSourceConfig, ProjectConfig
@@ -115,6 +116,36 @@ def test_clean_preserves_data_maps(tmp_path: Path) -> None:
 
     assert not stale_file.exists()
     assert not stale_dir.exists()
+
+
+def test_serve_project_respects_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _stub_echarts(monkeypatch)
+    init_project(tmp_path)
+
+    monkeypatch.setattr("ducksite.watcher.watch_and_build", lambda *_, **__: None)
+
+    bound: dict[str, object] = {}
+
+    class FakeServer:
+        def __init__(self, address, handler):  # type: ignore[no-untyped-def]
+            bound["address"] = address
+            bound["handler"] = handler
+
+        def __enter__(self):  # type: ignore[override]
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # type: ignore[override]
+            return False
+
+        def serve_forever(self):  # type: ignore[override]
+            bound["served"] = True
+
+    monkeypatch.setattr(builder.http.server, "ThreadingHTTPServer", FakeServer)
+
+    serve_project(tmp_path, port=8123, backend="builtin", host="0.0.0.0")
+
+    assert bound["address"] == ("0.0.0.0", 8123)
+    assert bound.get("served") is True
 
 
 def test_build_does_not_clean_by_default(

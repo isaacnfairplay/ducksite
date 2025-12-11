@@ -86,7 +86,7 @@ def create_app(cfg: ProjectConfig) -> Any:
     return app
 
 
-def serve_fast(cfg: ProjectConfig, port: int = 8080) -> None:
+def serve_fast(cfg: ProjectConfig, port: int = 8080, host: str = "127.0.0.1") -> None:
     """
     Run uvicorn against the static ASGI app.
     """
@@ -99,6 +99,8 @@ def serve_fast(cfg: ProjectConfig, port: int = 8080) -> None:
         ) from e
 
     app = create_app(cfg)
-    host = "0.0.0.0"
-    print(f"[ducksite] serving {cfg.site_root} at http://localhost:{port}/ (uvicorn)")
+    display_host = "localhost" if host in {"127.0.0.1", "::1", "localhost"} else host
+    print(
+        f"[ducksite] serving {cfg.site_root} at http://{display_host}:{port}/ (uvicorn)"
+    )
     uvicorn.run(app, host=host, port=port, reload=False, access_log=False)
