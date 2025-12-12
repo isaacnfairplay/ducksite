@@ -24,15 +24,15 @@ def test_echart_blocks_parsed_without_format(demo_content: Path):
     cfg = json.loads(build_page_config(pq))
 
     visualizations = cfg["visualizations"]
-    assert len(visualizations) >= 50
+    assert len(visualizations) == 15
 
-    sample = visualizations.get("gallery_01")
+    sample = visualizations.get("gallery_hourly_bar")
     assert sample
-    assert sample["data_query"] == "gallery_q1_totals"
+    assert sample["data_query"] == "nytaxi_hourly_metrics"
     assert sample["type"] == "bar"
-    assert "format" not in sample
+    assert sample["format"]["trip_count"]["highlight_expr"] == "trip_count >= 50"
 
-    assert all("format" not in spec for spec in visualizations.values())
+    assert "gallery_payment_pie" in visualizations
     assert "tables" not in cfg
 
 

@@ -132,6 +132,16 @@ Every markdown file beneath `content/` becomes a page. Ducksite scans these file
 ### Page anatomy
 - SQL blocks: ```sql <id> ... ``` define page-level queries. They are compiled and written to `static/sql/<page_path>/<id>.sql` during the build.
 - Visualization blocks (e.g., ```echart ...``` or ```table ...```) bind to `data_query` ids and render charts or tables in the generated HTML. See the demo pages for working patterns.
+
+## Chart gallery coverage
+
+The generated demo includes a `/gallery` page powered by the NYC taxi parquet
+downloaded during `ducksite init` (with an automatic fallback sample when the
+network is unavailable). Each chart type supported by the simple DSL has a
+single, focused example—bar, line, scatter with trendline, pie, heatmap, gauge,
+funnel, pictorial bar, sankey, graph, boxplot, candlestick, radar, treemap, and
+sunburst—so you can copy realistic snippets that also show conditional labels
+and colour formatting.
 - Layout blocks: ```grid cols=<n> gap=<size>``` arrange components; cell ids must match the surrounding SQL or viz blocks.
 
 ### Example page

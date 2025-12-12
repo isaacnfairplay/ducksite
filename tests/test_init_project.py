@@ -67,6 +67,10 @@ def test_init_demo_project_files(tmp_path: Path, monkeypatch) -> None:
     plugin_fs = next(fs for fs in cfg.file_sources if fs.name == "demo_plugin")
     assert plugin_fs.plugin == "plugins/demo_plugin.py"
 
+    nytaxi_fs = next(fs for fs in cfg.file_sources if fs.name == "nytaxi")
+    assert nytaxi_fs.upstream_glob.endswith("nytaxi-*.parquet")
+    assert nytaxi_fs.pattern == "data/nytaxi/*.parquet"
+
     parsed = parse_markdown_page(tmp_path / "content" / "index.md", Path("index.md"))
     assert "demo_summary" in parsed.sql_blocks
     assert parsed.echart_blocks["category_chart"]["data_query"] == "demo_summary"

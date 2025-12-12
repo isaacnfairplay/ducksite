@@ -42,30 +42,30 @@ def _create_small_nytaxi_sample(dest: Path) -> None:
     """
     Fallback: create a tiny NYTaxi-like parquet file locally using DuckDB.
 
-    Columns:
-      borough         VARCHAR
-      hour            INTEGER (0-23)
-      distance_km     DOUBLE
-      total_amount    DOUBLE
-      passenger_count INTEGER
+    Columns align with the public TLC drop so gallery queries work the same
+    with the real file or this seed sample.
     """
     con = duckdb.connect()
     try:
         con.execute(
             """
             COPY (
-              SELECT 'Manhattan'::VARCHAR AS borough,  8::INT AS hour,
-                     2.5::DOUBLE AS distance_km, 15.0::DOUBLE AS total_amount,
-                     1::INT AS passenger_count
-              UNION ALL SELECT 'Manhattan', 9,  1.3,  9.5, 1
-              UNION ALL SELECT 'Manhattan', 18, 4.2, 22.0, 2
-              UNION ALL SELECT 'Brooklyn',  18, 5.0, 25.0, 2
-              UNION ALL SELECT 'Brooklyn',  19, 3.8, 19.0, 1
-              UNION ALL SELECT 'Queens',     7, 12.0, 45.0, 1
-              UNION ALL SELECT 'Queens',     8,  3.2, 18.0, 3
-              UNION ALL SELECT 'Bronx',     22,  6.7, 28.0, 2
-              UNION ALL SELECT 'Bronx',     23,  2.1, 11.0, 1
-              UNION ALL SELECT 'Staten Island', 14, 10.0, 40.0, 1
+              SELECT *
+              FROM (
+                VALUES
+                  ('Manhattan',  8,  1.6, 15.0,  2.0, 1, 1, TIMESTAMP '2023-01-01 08:05', TIMESTAMP '2023-01-01 08:25'),
+                  ('Manhattan',  9,  1.1,  9.5,  1.5, 1, 2, TIMESTAMP '2023-01-01 09:10', TIMESTAMP '2023-01-01 09:30'),
+                  ('Manhattan', 18,  4.2, 22.0,  3.0, 2, 1, TIMESTAMP '2023-01-01 18:45', TIMESTAMP '2023-01-01 19:15'),
+                  ('Brooklyn',  18,  5.0, 25.0,  4.0, 2, 1, TIMESTAMP '2023-01-02 18:10', TIMESTAMP '2023-01-02 18:40'),
+                  ('Brooklyn',  19,  3.8, 19.0,  2.0, 1, 2, TIMESTAMP '2023-01-02 19:15', TIMESTAMP '2023-01-02 19:40'),
+                  ('Queens',     7, 12.0, 45.0,  6.0, 1, 1, TIMESTAMP '2023-01-03 07:30', TIMESTAMP '2023-01-03 08:00'),
+                  ('Queens',     8,  3.2, 18.0,  2.0, 3, 2, TIMESTAMP '2023-01-03 08:10', TIMESTAMP '2023-01-03 08:35'),
+                  ('Bronx',     22,  6.7, 28.0,  3.0, 2, 3, TIMESTAMP '2023-01-04 22:05', TIMESTAMP '2023-01-04 22:45'),
+                  ('Bronx',     23,  2.1, 11.0,  0.0, 1, 1, TIMESTAMP '2023-01-04 23:40', TIMESTAMP '2023-01-05 00:05'),
+                  ('Staten Island', 14, 10.0, 40.0,  5.0, 1, 4, TIMESTAMP '2023-01-05 14:20', TIMESTAMP '2023-01-05 14:55'),
+                  ('Queens',    10,  2.4, 17.0,  1.0, 2, 1, TIMESTAMP '2023-01-06 10:05', TIMESTAMP '2023-01-06 10:30'),
+                  ('Manhattan', 21,  8.0, 36.0,  4.5, 3, 2, TIMESTAMP '2023-01-06 21:10', TIMESTAMP '2023-01-06 21:50')
+              ) AS t(borough, hour, distance_km, total_amount, tip_amount, passenger_count, payment_type, tpep_pickup_datetime, tpep_dropoff_datetime)
             )
             TO ?
             (FORMAT 'parquet');

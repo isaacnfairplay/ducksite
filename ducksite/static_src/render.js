@@ -761,6 +761,8 @@ async function initInputsUI(inputDefs, inputs, runQuery) {
  *   - type: boxplot
  *   - type: candlestick
  *   - type: radar
+ *   - type: treemap
+ *   - type: sunburst
  *
  * Extra series types are supported via an "option-column" mode:
  *
@@ -1466,6 +1468,53 @@ async function renderChart(container, vizSpec, rows, id) {
     });
   }
 
+  function buildTreemapOption() {
+    const nameKey = vizSpec.name || vizSpec.label || vizSpec.category || "name";
+    const valueKey = vizSpec.value || vizSpec.size || vizSpec.weight || "value";
+
+    const data = rows.map((r) => ({
+      name: getField(r, nameKey),
+      value: toNumber(getField(r, valueKey), 0),
+    }));
+
+    return applyDarkTheme({
+      title: vizSpec.title ? { text: vizSpec.title } : undefined,
+      tooltip: { trigger: "item", formatter: "{b}: {c}" },
+      series: [
+        {
+          type: "treemap",
+          roam: false,
+          data,
+        },
+      ],
+    });
+  }
+
+  function buildSunburstOption() {
+    const nameKey = vizSpec.name || vizSpec.label || vizSpec.category || "name";
+    const valueKey = vizSpec.value || vizSpec.size || vizSpec.weight || "value";
+    const radius = vizSpec.radius || ["20%", "80%"];
+
+    const data = rows.map((r) => ({
+      name: getField(r, nameKey),
+      value: toNumber(getField(r, valueKey), 0),
+    }));
+
+    return applyDarkTheme({
+      title: vizSpec.title ? { text: vizSpec.title } : undefined,
+      tooltip: { trigger: "item" },
+      series: [
+        {
+          type: "sunburst",
+          radius,
+          data,
+          emphasis: { focus: "ancestor" },
+          label: { rotate: "radial" },
+        },
+      ],
+    });
+  }
+
   let option = {};
 
   switch (type) {
@@ -1517,6 +1566,14 @@ async function renderChart(container, vizSpec, rows, id) {
 
     case "radar":
       option = buildRadarOption();
+      break;
+
+    case "treemap":
+      option = buildTreemapOption();
+      break;
+
+    case "sunburst":
+      option = buildSunburstOption();
       break;
 
     default:

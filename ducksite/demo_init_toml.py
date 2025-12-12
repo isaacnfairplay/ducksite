@@ -98,6 +98,27 @@ def init_demo_toml(root: Path) -> None:
     except ValueError:
         print(f"[ducksite:demo] {toml_path} already contains plugin file source, skipping.")
 
+    nytaxi_entry = {
+        "name": "nytaxi",
+        "pattern": "data/nytaxi/*.parquet",
+        "upstream_glob": "${DIR_FAKE}/nytaxi-*.parquet",
+        "union_mode": "union_all_by_name",
+        "on_empty": "warn",
+    }
+
+    try:
+        rendered = add_file_source_entry(
+            rendered,
+            nytaxi_entry,
+            root,
+            comments=[
+                "ducksite.toml - dummy config for local testing",
+                "Real NYC TLC taxi parquet (or fallback sample) for the chart gallery.",
+            ],
+        )
+    except ValueError:
+        print(f"[ducksite:demo] {toml_path} already contains nytaxi file source, skipping.")
+
     chain_entry = {
         "name": CHAIN_PLUGIN_NAME,
         "pattern": f"data/{CHAIN_PLUGIN_NAME}/**/*.parquet",
