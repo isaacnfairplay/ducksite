@@ -37,3 +37,4 @@ files = ["ducksite"]
 markers = [
   "slow: marks slow-running integration checks",
 ]
+pythonpath = ["."]
