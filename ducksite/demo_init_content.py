@@ -891,7 +891,7 @@ def _init_gallery_page(root: Path) -> None:
                   distance_km * (1 + n * 0.05) AS distance_km,
                   total_amount * (1 + n * 0.03) AS total_amount
                 FROM base
-                CROSS JOIN range(0, 3) AS n
+                CROSS JOIN range(0, 3) AS n(n)
                 LIMIT 180;
                 """
             ),

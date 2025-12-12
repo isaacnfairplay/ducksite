@@ -332,9 +332,8 @@ def build_page_config(pq: PageQueries) -> str:
     tables: Dict[str, Dict[str, Any]] = {}
 
     for tid, spec in pq.table_blocks.items():
-        entry: Dict[str, Any] = {"query": spec.get("query") or tid}
-        if "format" in spec:
-            entry["format"] = spec["format"]
+        entry: Dict[str, Any] = {**spec}
+        entry["query"] = spec.get("query") or tid
         tables[tid] = entry
 
     config: Dict[str, Any] = {
