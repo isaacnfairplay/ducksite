@@ -810,114 +810,522 @@ def _init_gallery_page(root: Path) -> None:
 
       /content/gallery/index.md
 
-    This version keeps a small, easy-to-read sample of chart types while
-    relying on TUY helpers to assemble the markdown.
+    The gallery now shows one clear example for every chart type using the
+    NYC taxi parquet (or the bundled fallback sample) so each shape highlights
+    its speciality instead of repeating the same bar/line slices.
     """
     gallery_md = root / "content" / "gallery" / "index.md"
-    intro = "Compact gallery of common chart shapes using TUY markdown helpers."
+    intro = textwrap.dedent(
+        """
+        One focused example per chart type, driven by the NYC taxi parquet
+        downloaded during `ducksite init` (or the bundled fallback sample).
+        Each chart highlights a capability: conditional color, trend lines,
+        special labels, and option-column examples for combos.
+        """
+    )
 
-    base_blocks = [
+    payment_label = """
+        CASE payment_type
+          WHEN 1 THEN 'Credit card'
+          WHEN 2 THEN 'Cash'
+          WHEN 3 THEN 'No charge'
+          WHEN 4 THEN 'Dispute'
+          ELSE 'Other'
+        END
+    """
+
+    sql_blocks: list[tuple[str, str, str]] = [
         (
             "sql",
-            "gallery_q1_totals",
-            """
-            SELECT
-              category,
-              SUM(value) AS total_value
-            FROM demo
-            GROUP BY category
-            ORDER BY category;
-            """,
+            "nytaxi_hourly_metrics",
+            textwrap.dedent(
+                f"""
+                WITH trips AS (
+                  SELECT
+                    CAST(strftime(tpep_pickup_datetime, '%H') AS INT) AS hour,
+                    trip_distance * 1.60934 AS distance_km,
+                    total_amount,
+                    passenger_count
+                  FROM nytaxi
+                  WHERE total_amount IS NOT NULL AND trip_distance IS NOT NULL
+                )
+                SELECT
+                  hour,
+                  COUNT(*) AS trip_count,
+                  ROUND(AVG(distance_km), 2) AS avg_distance_km,
+                  ROUND(SUM(total_amount), 2) AS total_fare
+                FROM trips
+                GROUP BY hour
+                ORDER BY hour;
+                """
+            ),
         ),
         (
             "sql",
-            "gallery_q2_average",
-            """
-            SELECT
-              category,
-              AVG(value) AS avg_value
-            FROM demo
-            GROUP BY category
-            ORDER BY category;
-            """,
+            "nytaxi_payment_split",
+            textwrap.dedent(
+                f"""
+                SELECT
+                  {payment_label} AS payment_label,
+                  COUNT(*) AS trip_count,
+                  ROUND(SUM(total_amount), 2) AS total_fare
+                FROM nytaxi
+                GROUP BY payment_label
+                ORDER BY trip_count DESC;
+                """
+            ),
         ),
         (
             "sql",
-            "gallery_q3_hist",
-            """
-            SELECT
-              value AS bucket,
-              COUNT(*) AS row_count
-            FROM demo
-            GROUP BY value
-            ORDER BY value;
-            """,
+            "nytaxi_scatter_points",
+            textwrap.dedent(
+                """
+                WITH base AS (
+                  SELECT
+                    trip_distance * 1.60934 AS distance_km,
+                    total_amount
+                  FROM nytaxi
+                  WHERE trip_distance > 0 AND total_amount > 0
+                )
+                SELECT
+                  distance_km * (1 + n * 0.05) AS distance_km,
+                  total_amount * (1 + n * 0.03) AS total_amount
+                FROM base
+                CROSS JOIN range(0, 3) AS n
+                LIMIT 180;
+                """
+            ),
         ),
         (
             "sql",
-            "gallery_q4_cumulative",
-            """
-            SELECT
-              category,
-              SUM(value) AS total_value,
-              SUM(SUM(value)) OVER (ORDER BY category) AS running_total
-            FROM demo
-            GROUP BY category
-            ORDER BY category;
-            """,
+            "nytaxi_heatmap",
+            textwrap.dedent(
+                """
+                WITH base AS (
+                  SELECT
+                    CAST(strftime(tpep_pickup_datetime, '%H') AS INT) AS hour,
+                    passenger_count
+                  FROM nytaxi
+                )
+                SELECT
+                  hour,
+                  CASE WHEN passenger_count = 1 THEN 'Solo' ELSE 'Group' END AS passenger_bucket,
+                  COUNT(*) AS ride_count
+                FROM base
+                GROUP BY hour, passenger_bucket
+                ORDER BY hour, passenger_bucket;
+                """
+            ),
         ),
         (
             "sql",
-            "gallery_q5_scaled",
-            """
-            SELECT
-              category,
-              value * 2 AS double_value
-            FROM demo
-            ORDER BY category, value;
-            """,
+            "nytaxi_tip_percent",
+            textwrap.dedent(
+                """
+                SELECT
+                  ROUND(
+                    100 * AVG(NULLIF(tip_amount, 0) / NULLIF(total_amount, 0)),
+                    1
+                  ) AS value
+                FROM nytaxi
+                WHERE total_amount > 0;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_trip_funnel",
+            textwrap.dedent(
+                """
+                WITH base AS (
+                  SELECT * FROM nytaxi WHERE total_amount > 0
+                )
+                SELECT 'All trips' AS stage, COUNT(*) AS value FROM base
+                UNION ALL
+                SELECT '2+ passengers', COUNT(*) FROM base WHERE passenger_count >= 2
+                UNION ALL
+                SELECT 'Over 5 km', COUNT(*) FROM base WHERE trip_distance * 1.60934 > 5
+                UNION ALL
+                SELECT 'Tipped rides', COUNT(*) FROM base WHERE tip_amount > 0
+                ORDER BY value DESC;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_passenger_symbols",
+            textwrap.dedent(
+                """
+                SELECT
+                  CASE
+                    WHEN passenger_count = 1 THEN 'Solo'
+                    WHEN passenger_count = 2 THEN 'Pair'
+                    ELSE 'Group'
+                  END AS label,
+                  ROUND(AVG(total_amount), 2) AS height
+                FROM nytaxi
+                WHERE total_amount > 0
+                GROUP BY label
+                ORDER BY height DESC;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_flow_payment",
+            textwrap.dedent(
+                f"""
+                WITH base AS (
+                  SELECT
+                    CASE WHEN passenger_count = 1 THEN 'Solo' ELSE 'Group' END AS passenger_bucket,
+                    {payment_label} AS payment_label
+                  FROM nytaxi
+                )
+                SELECT passenger_bucket AS source, payment_label AS target, COUNT(*) AS value
+                FROM base
+                GROUP BY passenger_bucket, payment_label
+                ORDER BY value DESC;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_box_stats",
+            textwrap.dedent(
+                f"""
+                WITH base AS (
+                  SELECT {payment_label} AS payment_label, total_amount
+                  FROM nytaxi
+                  WHERE total_amount > 0
+                )
+                SELECT
+                  payment_label AS name,
+                  MIN(total_amount) AS low,
+                  quantile_cont(total_amount, 0.25) AS q1,
+                  quantile_cont(total_amount, 0.5) AS median,
+                  quantile_cont(total_amount, 0.75) AS q3,
+                  MAX(total_amount) AS high
+                FROM base
+                GROUP BY payment_label
+                ORDER BY median DESC;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_candles",
+            textwrap.dedent(
+                """
+                WITH base AS (
+                  SELECT
+                    date(tpep_pickup_datetime) AS trip_day,
+                    total_amount,
+                    row_number() OVER (PARTITION BY date(tpep_pickup_datetime) ORDER BY tpep_pickup_datetime) AS rn,
+                    row_number() OVER (
+                      PARTITION BY date(tpep_pickup_datetime)
+                      ORDER BY tpep_pickup_datetime DESC
+                    ) AS rn_desc
+                  FROM nytaxi
+                  WHERE total_amount > 0
+                )
+                SELECT
+                  CAST(trip_day AS VARCHAR) AS name,
+                  MAX(CASE WHEN rn = 1 THEN total_amount END) AS open,
+                  MAX(CASE WHEN rn_desc = 1 THEN total_amount END) AS close,
+                  MIN(total_amount) AS low,
+                  MAX(total_amount) AS high
+                FROM base
+                GROUP BY trip_day
+                ORDER BY trip_day;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_radar",
+            textwrap.dedent(
+                """
+                SELECT 'Avg distance (km)' AS indicator, ROUND(AVG(trip_distance * 1.60934), 2) AS value, 60 AS max
+                FROM nytaxi
+                UNION ALL
+                SELECT 'Avg fare ($)', ROUND(AVG(total_amount), 2), 80
+                FROM nytaxi
+                UNION ALL
+                SELECT 'Passengers', ROUND(AVG(passenger_count), 2), 4
+                FROM nytaxi;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_treemap",
+            textwrap.dedent(
+                f"""
+                SELECT {payment_label} AS name, ROUND(SUM(total_amount), 2) AS value
+                FROM nytaxi
+                GROUP BY name
+                ORDER BY value DESC;
+                """
+            ),
+        ),
+        (
+            "sql",
+            "nytaxi_sunburst",
+            textwrap.dedent(
+                """
+                SELECT
+                  CASE
+                    WHEN passenger_count = 1 THEN 'Solo riders'
+                    WHEN passenger_count = 2 THEN 'Pairs'
+                    ELSE 'Groups'
+                  END AS name,
+                  COUNT(*) AS value
+                FROM nytaxi
+                GROUP BY name
+                ORDER BY value DESC;
+                """
+            ),
         ),
     ]
 
-    chart_templates = [
-        ("gallery_q1_totals", "bar", "category", "total_value", "Totals"),
-        ("gallery_q1_totals", "line", "category", "total_value", "Totals"),
-        ("gallery_q2_average", "bar", "category", "avg_value", "Averages"),
-        ("gallery_q2_average", "line", "category", "avg_value", "Averages"),
-        ("gallery_q3_hist", "bar", "bucket", "row_count", "Histogram"),
-        ("gallery_q3_hist", "line", "bucket", "row_count", "Histogram"),
-        ("gallery_q4_cumulative", "bar", "category", "running_total", "Cumulative"),
-        ("gallery_q4_cumulative", "line", "category", "running_total", "Cumulative"),
-        ("gallery_q5_scaled", "bar", "category", "double_value", "Scaled"),
-        ("gallery_q5_scaled", "line", "category", "double_value", "Scaled"),
+    chart_blocks = [
+        (
+            "echart",
+            "gallery_hourly_bar",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_hourly_metrics
+                type: bar
+                x: hour
+                y: trip_count
+                title: "Trips per pickup hour"
+                format:
+                  trip_count:
+                    color_expr: "CASE WHEN trip_count >= 50 THEN '#fb923c' ELSE '#38bdf8' END"
+                    highlight_expr: "trip_count >= 50"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_hourly_line",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_hourly_metrics
+                type: line
+                x: hour
+                y: avg_distance_km
+                title: "Average trip distance by hour"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_scatter_trend",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_scatter_points
+                type: scatter
+                x: distance_km
+                y: total_amount
+                trendline: linear
+                title: "Fare vs. distance with trend"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_payment_pie",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_payment_split
+                type: pie
+                name: payment_label
+                value: trip_count
+                title: "Payment mix"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_heatmap",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_heatmap
+                type: heatmap
+                x: hour
+                y: passenger_bucket
+                value: ride_count
+                title: "Passenger mix by hour"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_tip_gauge",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_tip_percent
+                type: gauge
+                name: "Average tip %"
+                value: value
+                title: "Avg tip share"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_trip_funnel",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_trip_funnel
+                type: funnel
+                name: stage
+                value: value
+                title: "Trip funnel"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_pictorial",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_passenger_symbols
+                type: pictorialBar
+                x: label
+                y: height
+                title: "Average fare by party size"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_sankey",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_flow_payment
+                type: sankey
+                source: source
+                target: target
+                value: value
+                title: "Party size to payment type"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_graph",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_flow_payment
+                type: graph
+                source: source
+                target: target
+                value: value
+                layout: circular
+                title: "Payment relationship graph"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_boxplot",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_box_stats
+                type: boxplot
+                name: name
+                low: low
+                q1: q1
+                median: median
+                q3: q3
+                high: high
+                title: "Fare distribution by payment"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_candles",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_candles
+                type: candlestick
+                name: name
+                open: open
+                close: close
+                low: low
+                high: high
+                title: "Daily fare candles"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_radar",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_radar
+                type: radar
+                indicator: indicator
+                value: value
+                max: max
+                title: "Taxi metric radar"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_treemap",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_treemap
+                type: treemap
+                name: name
+                value: value
+                title: "Fare share treemap"
+                """
+            ),
+        ),
+        (
+            "echart",
+            "gallery_sunburst",
+            textwrap.dedent(
+                """
+                data_query: nytaxi_sunburst
+                type: sunburst
+                name: name
+                value: value
+                title: "Rider group sunburst"
+                """
+            ),
+        ),
     ]
 
-    chart_blocks: list[tuple[str, str, str]] = []
-    grid_blocks: list[tuple[str, str, str]] = []
-    for idx in range(50):
-        query, chart_type, x_field, y_field, title_prefix = chart_templates[idx % len(chart_templates)]
-        chart_id = f"gallery_{idx + 1:02d}"
-        body = textwrap.dedent(
-            f"""
-            data_query: {query}
-            type: {chart_type}
-            x: {x_field}
-            y: {y_field}
-            title: "{title_prefix} ({chart_type}) {idx + 1:02d}"
-            """
+    grids = [
+        "| gallery_hourly_bar:6 | gallery_hourly_line:6 |",
+        "| gallery_scatter_trend:12 |",
+        "| gallery_payment_pie:4 | gallery_heatmap:4 | gallery_tip_gauge:4 |",
+        "| gallery_trip_funnel:4 | gallery_pictorial:4 | gallery_radar:4 |",
+        "| gallery_sankey:6 | gallery_graph:6 |",
+        "| gallery_boxplot:6 | gallery_candles:6 |",
+        "| gallery_treemap:6 | gallery_sunburst:6 |",
+    ]
+
+    grid_blocks = [
+        (
+            "grid",
+            f"cols=12 gap=md row={idx + 1:02d}",
+            row,
         )
-        chart_blocks.append(("echart", chart_id, body))
-
-        if idx % 2 == 0:
-            row = f"| {chart_id}:6 |"
-            if idx + 1 < 50:
-                row = f"{row} gallery_{idx + 2:02d}:6 |"
-            grid_blocks.append(("grid", f"cols=12 gap=sm row={idx // 2 + 1:02d}", row))
+        for idx, row in enumerate(grids)
+    ]
 
     content = _render_page(
         "# Chart Gallery",
         intro,
-        base_blocks + chart_blocks + grid_blocks,
+        sql_blocks + chart_blocks + grid_blocks,
     )
     write_if_missing(gallery_md, content)
 

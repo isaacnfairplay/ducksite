@@ -326,10 +326,10 @@ def test_gallery_titles_and_legends_visible(tmp_path: Path, monkeypatch: pytest.
     server.shutdown()
     ocr_text = pytesseract.image_to_string(image).lower()
 
-    assert "pie: share by category" in ocr_text
-    assert "sankey: simple source" in ocr_text
-    assert "a" in ocr_text and "b" in ocr_text
-    assert "pie: wide legend" in ocr_text
+    assert "payment mix" in ocr_text
+    assert "party size to payment type" in ocr_text
+    assert "trip funnel" in ocr_text
+    assert "rider group sunburst" in ocr_text
 
     def extract_lines(img) -> list[tuple[str, tuple[int, int, int, int]]]:
         data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
