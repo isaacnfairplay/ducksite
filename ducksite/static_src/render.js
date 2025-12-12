@@ -1706,8 +1706,35 @@ function normalizeQueryId(queryId, inputs) {
   return { valid, basePath, id };
 }
 
-export async function renderAll(pageConfig, inputs, duckdbBundle) {
-  console.debug("[ducksite] renderAll: start", { pageConfig, inputs });
+function extractQueryDependencies(queryId, rawSql) {
+  const deps = { inputs: new Set(), params: new Set() };
+  const regex = /\$\{(inputs|params)\.([A-Za-z0-9_]+)\}/g;
+
+  if (typeof queryId === "string") {
+    for (const m of queryId.matchAll(regex)) {
+      deps[m[1]].add(m[2]);
+    }
+  }
+
+  if (typeof rawSql === "string") {
+    for (const m of rawSql.matchAll(regex)) {
+      deps[m[1]].add(m[2]);
+    }
+  }
+
+  return deps;
+}
+
+function hasDependencyIntersection(deps, changeInfo) {
+  if (!changeInfo) return true; // treat as full render
+  const { changedInputs, changedParams } = changeInfo;
+  const hasInputHit = deps.inputs && [...deps.inputs].some((k) => changedInputs.has(k));
+  const hasParamHit = deps.params && [...deps.params].some((k) => changedParams.has(k));
+  return hasInputHit || hasParamHit;
+}
+
+export async function renderAll(pageConfig, inputs, duckdbBundle, renderState = null, changeInfo = null) {
+  console.debug("[ducksite] renderAll: start", { pageConfig, inputs, changeInfo });
 
   const sqlBase = getPageSqlBasePath();
   const duckdb = duckdbBundle && duckdbBundle.conn ? duckdbBundle : await initDuckDB();
@@ -1718,8 +1745,37 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
   const pageQueries = pageConfig.queries || {};
   const hasQueryManifest = Object.keys(pageQueries).length > 0;
 
-  const queryCache = new Map();
+  const state =
+    renderState ||
+    {
+      queryCache: new Map(),
+      queryDependencies: new Map(),
+      lastParams: {},
+    };
+
+  const changedParams = new Set();
+  for (const key of new Set([...Object.keys(state.lastParams || {}), ...Object.keys(params)])) {
+    if ((state.lastParams || {})[key] !== params[key]) {
+      changedParams.add(key);
+    }
+  }
+  state.lastParams = { ...params };
+
   const charts = [];
+  let fallbackToFullRender = false;
+
+  function buildCacheKey(basePath, id, chartFormatSpec, tableFormatSpec) {
+    return `${basePath}${id}::${JSON.stringify(chartFormatSpec || {})}::${JSON.stringify(
+      tableFormatSpec || {},
+    )}`;
+  }
+
+  function registerDependencies(cacheKey, queryId, rawSql) {
+    const deps = extractQueryDependencies(queryId, rawSql);
+    state.queryDependencies.set(cacheKey, deps);
+    pageConfig.queryDependencies = state.queryDependencies;
+    window.ducksiteQueryDependencies = state.queryDependencies;
+  }
 
   async function runQuery(queryId, chartFormatSpec = null, tableFormatSpec = null) {
     const { valid, basePath, id } = normalizeQueryId(queryId, inputs);
@@ -1734,9 +1790,7 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
       return [];
     }
 
-    const cacheKey = `${basePath}${id}::${JSON.stringify(chartFormatSpec || {})}::${JSON.stringify(
-      tableFormatSpec || {},
-    )}`;
+    const cacheKey = buildCacheKey(basePath, id, chartFormatSpec, tableFormatSpec);
 
     const isGlobal = typeof queryId === "string" && queryId.startsWith("global:");
     const isTemplated = typeof queryId === "string" && queryId.includes("${inputs.");
@@ -1749,14 +1803,14 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
           "known ids:",
           Object.keys(pageQueries),
         );
-        queryCache.set(cacheKey, []);
+        state.queryCache.set(cacheKey, []);
         return [];
       }
     }
 
-    if (queryCache.has(cacheKey)) {
+    if (state.queryCache.has(cacheKey)) {
       console.debug("[ducksite] runQuery: cache hit", id);
-      return queryCache.get(cacheKey);
+      return state.queryCache.get(cacheKey);
     }
 
     console.debug("[ducksite] runQuery: loading SQL for", {
@@ -1767,12 +1821,13 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
 
     const sqlUrl = `${basePath}${id}.sql`;
     const rawSql = await loadSqlText(sqlUrl);
+    registerDependencies(cacheKey, queryId, rawSql);
     const withParams = substituteParams(rawSql, inputs, params);
     const formattedSql = buildDerivedSqlWithFormatting(withParams, chartFormatSpec, tableFormatSpec);
     const finalSql = rewriteParquetPathsHttp(formattedSql);
 
     const rows = await executeQuery(conn, finalSql);
-    queryCache.set(cacheKey, rows);
+    state.queryCache.set(cacheKey, rows);
     return rows;
   }
 
@@ -1782,8 +1837,10 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
   const vizSpecs = pageConfig.visualizations || {};
   const tableSpecs = pageConfig.tables || {};
   const grids = pageConfig.grids || [];
+  const allowPartial = Boolean(changeInfo);
+  const changedInputs = (changeInfo && changeInfo.changedInputs) || new Set();
 
-  for (const grid of grids) {
+  outer: for (const grid of grids) {
     console.debug("[ducksite] renderAll: processing grid", grid);
     for (const row of grid.rows || []) {
       for (const cell of row) {
@@ -1792,6 +1849,20 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
         const vizSpec = vizSpecs[cellId];
         if (vizSpec) {
           const queryId = vizSpec.data_query || vizSpec.dataQuery || cellId;
+          const { valid, basePath, id } = normalizeQueryId(queryId, inputs);
+          const cacheKey = buildCacheKey(basePath, id, vizSpec.format || null, null);
+          const deps = state.queryDependencies.get(cacheKey);
+          if (allowPartial) {
+            if (!deps) {
+              fallbackToFullRender = true;
+              break outer;
+            }
+            if (!hasDependencyIntersection(deps, { changedInputs, changedParams })) {
+              console.debug("[ducksite] renderAll: skipping unchanged viz cell", cellId);
+              continue;
+            }
+          }
+
           const selector = `.${CLASS.vizContainer}[${DATA.vizId}="${cellId}"]`;
           const container = document.querySelector(selector);
           if (!container) {
@@ -1814,6 +1885,20 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
 
           const tableSpec = tableSpecs[cellId] || {};
           const queryId = tableSpec.query || cellId;
+          const { valid, basePath, id } = normalizeQueryId(queryId, inputs);
+          const cacheKey = buildCacheKey(basePath, id, null, tableSpec.format || null);
+          const deps = state.queryDependencies.get(cacheKey);
+          if (allowPartial) {
+            if (!deps) {
+              fallbackToFullRender = true;
+              break outer;
+            }
+            if (!hasDependencyIntersection(deps, { changedInputs, changedParams })) {
+              console.debug("[ducksite] renderAll: skipping unchanged table cell", cellId);
+              continue;
+            }
+          }
+
           const selector = `.${CLASS.tableContainer}[${DATA.tableId}="${cellId}"]`;
           const container = document.querySelector(selector);
           if (!container) {
@@ -1848,7 +1933,13 @@ export async function renderAll(pageConfig, inputs, duckdbBundle) {
     window.addEventListener("resize", resizeHandler);
   }
 
+  if (allowPartial && fallbackToFullRender) {
+    console.debug("[ducksite] renderAll: dependency info missing; falling back to full render");
+    return renderAll(pageConfig, inputs, duckdbBundle, state, null);
+  }
+
   console.debug("[ducksite] renderAll: done");
+  return state;
 }
 
 // Export helpers so the SQL editor can materialise views with the same
