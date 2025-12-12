@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import contextvars
+import sqlite3
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict
-
-import contextvars
-from contextlib import contextmanager
-import sqlite3
+from typing import Dict, Iterator
 
 from .data_map_paths import data_map_shard, data_map_sqlite_path
 
@@ -136,7 +135,7 @@ def clear_cache() -> None:
 
 
 @contextmanager
-def override_data_map(data_map: dict[str, str] | None):
+def override_data_map(data_map: dict[str, str] | None) -> Iterator[None]:
     token = _DATA_MAP_OVERRIDE.set(data_map)
     try:
         yield
@@ -145,7 +144,7 @@ def override_data_map(data_map: dict[str, str] | None):
 
 
 @contextmanager
-def override_row_filters(row_filters: dict[str, str] | None):
+def override_row_filters(row_filters: dict[str, str] | None) -> Iterator[None]:
     token = _ROW_FILTER_OVERRIDE.set(row_filters)
     try:
         yield
