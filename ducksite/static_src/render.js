@@ -1809,8 +1809,22 @@ export async function renderAll(pageConfig, inputs, duckdbBundle, renderState = 
     }
 
     if (state.queryCache.has(cacheKey)) {
-      console.debug("[ducksite] runQuery: cache hit", id);
-      return state.queryCache.get(cacheKey);
+      const deps = state.queryDependencies.get(cacheKey);
+      const changeContext = changeInfo ? { changedInputs, changedParams } : null;
+
+      if (changeContext) {
+        const needsRefresh = !deps || hasDependencyIntersection(deps, changeContext);
+        if (needsRefresh) {
+          console.debug("[ducksite] runQuery: cache invalidated for", id, deps);
+          state.queryCache.delete(cacheKey);
+        } else {
+          console.debug("[ducksite] runQuery: cache hit", id);
+          return state.queryCache.get(cacheKey);
+        }
+      } else {
+        console.debug("[ducksite] runQuery: cache hit", id);
+        return state.queryCache.get(cacheKey);
+      }
     }
 
     console.debug("[ducksite] runQuery: loading SQL for", {
