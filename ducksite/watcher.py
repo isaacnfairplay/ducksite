@@ -26,7 +26,11 @@ def _snapshot_paths(root: Path) -> Dict[Path, float]:
 
 def watch_and_build(root: Path, interval: float = 2.0, clean: bool = False) -> None:
     print("[ducksite] initial build")
-    build_project(root, clean=clean)
+    try:
+        build_project(root, clean=clean)
+    except FileNotFoundError as exc:
+        print(f"[ducksite] watcher exiting: {exc}")
+        return
     prev = _snapshot_paths(root)
     print("[ducksite] watching for changes... (Ctrl+C to stop)")
     while True:
@@ -42,7 +46,11 @@ def watch_and_build(root: Path, interval: float = 2.0, clean: bool = False) -> N
                     break
         if changed:
             print("[ducksite] change detected, rebuilding...")
-            build_project(root)
+            try:
+                build_project(root)
+            except FileNotFoundError as exc:
+                print(f"[ducksite] watcher exiting: {exc}")
+                return
             prev = cur
 
 
