@@ -328,10 +328,10 @@ def parse_markdown_page(path: Path, rel_path: Path) -> PageQueries:
 
 
 def build_page_config(pq: PageQueries) -> str:
-  visualizations: Dict[str, Dict[str, Any]] = pq.echart_blocks
-  tables: Dict[str, Dict[str, Any]] = {}
+    visualizations: Dict[str, Dict[str, Any]] = pq.echart_blocks
+    tables: Dict[str, Dict[str, Any]] = {}
 
-  for tid, spec in pq.table_blocks.items():
+    for tid, spec in pq.table_blocks.items():
         entry: Dict[str, Any] = {**spec}
         entry["query"] = spec.get("query") or tid
         tables[tid] = entry
