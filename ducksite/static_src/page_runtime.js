@@ -28,11 +28,24 @@ export async function initPage() {
   const duckdbBundle = await initDuckDB();
   console.debug("[ducksite] initPage: duckdbBundle", duckdbBundle);
 
+  let renderState = null;
+
+  function computeChangedInputs(prev, next) {
+    const keys = new Set([...Object.keys(prev || {}), ...Object.keys(next || {})]);
+    const changed = new Set();
+    for (const key of keys) {
+      if (JSON.stringify(prev[key]) !== JSON.stringify(next[key])) {
+        changed.add(key);
+      }
+    }
+    return changed;
+  }
+
   // Helper to (re)render the whole page for a given inputs object.
-  async function rerender(currentInputs) {
+  async function rerender(currentInputs, changeInfo = null) {
     try {
-      console.debug("[ducksite] initPage: rerender with inputs", currentInputs);
-      await renderAll(pageConfig, currentInputs, duckdbBundle);
+      console.debug("[ducksite] initPage: rerender with inputs", currentInputs, changeInfo);
+      renderState = await renderAll(pageConfig, currentInputs, duckdbBundle, renderState, changeInfo);
       console.debug("[ducksite] initPage: renderAll complete");
     } catch (err) {
       console.error("[ducksite] initPage: renderAll error", err);
@@ -63,7 +76,8 @@ export async function initPage() {
   window.addEventListener("ducksiteInputsChanged", (ev) => {
     const detail = ev.detail || {};
     const nextInputs = detail.inputs || {};
+    const changedInputs = computeChangedInputs(inputs, nextInputs);
     inputs = nextInputs;
-    void rerender(inputs);
+    void rerender(inputs, { changedInputs });
   });
 }
