@@ -43,7 +43,8 @@ def _create_small_nytaxi_sample(dest: Path) -> None:
     Fallback: create a tiny NYTaxi-like parquet file locally using DuckDB.
 
     Columns align with the public TLC drop so gallery queries work the same
-    with the real file or this seed sample.
+    with the real file or this seed sample. Distances are stored in miles to
+    match the `trip_distance` units used by NYC TLC.
     """
     con = duckdb.connect()
     try:
@@ -65,7 +66,7 @@ def _create_small_nytaxi_sample(dest: Path) -> None:
                   ('Staten Island', 14, 10.0, 40.0,  5.0, 1, 4, TIMESTAMP '2023-01-05 14:20', TIMESTAMP '2023-01-05 14:55'),
                   ('Queens',    10,  2.4, 17.0,  1.0, 2, 1, TIMESTAMP '2023-01-06 10:05', TIMESTAMP '2023-01-06 10:30'),
                   ('Manhattan', 21,  8.0, 36.0,  4.5, 3, 2, TIMESTAMP '2023-01-06 21:10', TIMESTAMP '2023-01-06 21:50')
-              ) AS t(borough, hour, distance_km, total_amount, tip_amount, passenger_count, payment_type, tpep_pickup_datetime, tpep_dropoff_datetime)
+                ) AS t(borough, hour, trip_distance, total_amount, tip_amount, passenger_count, payment_type, tpep_pickup_datetime, tpep_dropoff_datetime)
             )
             TO ?
             (FORMAT 'parquet');
