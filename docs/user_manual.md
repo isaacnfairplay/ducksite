@@ -144,6 +144,26 @@ sunburst—so you can copy realistic snippets that also show conditional labels
 and colour formatting.
 - Layout blocks: ```grid cols=<n> gap=<size>``` arrange components; cell ids must match the surrounding SQL or viz blocks.
 
+#### Clustered (grouped) bar charts
+- Use `series: <column>` inside an `echart` block to cluster bars by a grouping column while sharing the same x-axis field. Ducksite passes each distinct `series` value to ECharts as its own bar color at every x-axis tick.
+- Example taken from the hierarchy demo page:
+  ````markdown
+  ```sql hierarchy_window_all
+  SELECT region, strftime(max_day, '%Y-%m-%d') AS max_day, period, value
+  FROM demo_hierarchy_window
+  ORDER BY max_day DESC, period;
+  ```
+
+  ```echart hierarchy_window_chart
+  data_query: hierarchy_window_all
+  type: bar
+  x: period
+  y: value
+  series: region
+  title: "Templated hierarchy with before/after day windows"
+  ```
+  ````
+
 ### Example page
 ```markdown
 # Inventory Dashboard
