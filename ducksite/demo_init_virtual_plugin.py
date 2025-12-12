@@ -15,7 +15,13 @@ def _render_demo_plugin() -> str:
         '''
         from pathlib import Path
 
-        from ducksite.virtual_parquet import VirtualParquetManifest, manifest_from_parquet_dir
+        from pathlib import PurePosixPath
+
+        from ducksite.virtual_parquet import (
+            VirtualParquetFile,
+            VirtualParquetManifest,
+            manifest_from_file_source,
+        )
 
 
         def build_manifest(cfg):
@@ -26,12 +32,23 @@ def _render_demo_plugin() -> str:
             root so you can see plugin-driven file sources without extra
             configuration.
             """
-            return manifest_from_parquet_dir(
-                cfg,
-                Path(cfg.root) / "fake_upstream",
-                http_prefix="data/{plugin_name}",
-                template_name="demo_plugin_[category]",
-                row_filter_template="category = ?",
+            manifest = manifest_from_file_source(cfg, "demo")
+
+            files = []
+            for f in manifest.files:
+                rel = PurePosixPath(f.http_path).relative_to("data/demo")
+                files.append(
+                    VirtualParquetFile(
+                        http_path=f"data/{plugin_name}/{{rel}}",
+                        physical_path=f.physical_path,
+                        row_filter=f.row_filter,
+                    )
+                )
+
+            return VirtualParquetManifest(
+                files=files,
+                template_name=manifest.template_name,
+                row_filter_template=manifest.row_filter_template,
             )
         '''
     ).format(plugin_name=DEMO_PLUGIN_NAME)
