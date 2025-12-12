@@ -184,7 +184,8 @@ Run the builder whenever you change configuration, models, or content:
 ```bash
 ducksite build --root /path/to/project
 ```
-The command cleans `static/`, copies JS assets, writes the data map, compiles SQL, and emits HTML under `static/`.
+- Use `--clean` when you want a fully fresh `static/` directory. Without it, the build is incremental and preserves non-content artifacts (forms, cached data map shards) while still pruning deleted markdown pages and regenerating SQL.
+- `--reload` keeps the process running and watches for file changes.
 
 ### Auto-reload while authoring
 ```bash
@@ -195,9 +196,11 @@ ducksite build --root /path/to/project --reload
 ### Serve
 After building, start the local server from the project root:
 ```bash
-ducksite serve --root /path/to/project --port 8080 --server builtin
+ducksite serve --root /path/to/project --port 8080 --host 127.0.0.1 --server builtin
 ```
+- `--host` defaults to `127.0.0.1`; set it to `0.0.0.0` when you need to listen on all interfaces.
 - `--server builtin` uses the bundled threaded HTTP server; `--server uvicorn` is available if you installed the extra dependency.
+- The serve command starts a background watcher so edits keep rebuilding the site automatically. Use `--clean` if you need the initial serve build to start from a blank `static/` directory.
 - The server hosts `static/` and form endpoints, and logs any errors for missing models or forms. Stop with `Ctrl+C`.
 
 ## 5. TUY helpers for quick edits
@@ -233,11 +236,15 @@ Use the interactive TUY commands when you want to adjust common project files wi
   # prompts for block type (sql/echart/table) and the block id to drop
   ```
 
+### `ducksite add plugin`
+- Scaffolds a blank virtual parquet plugin (by default under `plugins/`) so you can map HTTP-visible data paths to upstream parquet locations.
+- Provide the filename (without extension) and optional directory; the helper writes a stub `build_manifest` that returns an empty `VirtualParquetManifest` until you fill it in.
+
 ## Workflow checklist
 1. Initialize (demo or scratch) and confirm `ducksite.toml` exists.
 2. Fill in `[dirs]` and any `[[file_sources]]` entries, using `${DIR_*}` variables for portability.
 3. Add or edit `sources_sql/*.sql` model blocks with `-- name:` headers.
 4. Create `content/` markdown pages with SQL + viz + grid blocks.
-5. Use `ducksite add|modify|remove toml|sql|md` for quick adjustments without manually editing files.
+5. Use `ducksite add|modify|remove toml|sql|md` (and `ducksite add plugin` when you need a virtual parquet scaffold) for quick adjustments without manually editing files.
 6. Run `ducksite build --root .` and open the generated `static/*.html` pages.
 7. Serve locally with `ducksite serve --root . --port 8080` when you are ready to demo.
