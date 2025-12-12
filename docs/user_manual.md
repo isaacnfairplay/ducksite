@@ -131,7 +131,7 @@ Every markdown file beneath `content/` becomes a page. Ducksite scans these file
 
 ### Page anatomy
 - SQL blocks: ```sql <id> ... ``` define page-level queries. They are compiled and written to `static/sql/<page_path>/<id>.sql` during the build.
-- Visualization blocks (e.g., ```echart ...``` or ```table ...```) bind to `data_query` ids and render charts or tables in the generated HTML. See the demo pages for working patterns.
+- Visualization blocks (e.g., ```echart ...``` or ```table ...```) bind to `data_query` ids and render charts or tables in the generated HTML. Add `click_input: <input_name>` (and optionally `click_value: <column_name>`) to drive URL-synced inputs from chart points or table cells—hold Ctrl/Cmd while clicking to toggle membership on multi-select inputs. To offer opt-out flows from the UI, you can also include `click_anti_input: <input_name>` plus a `click_action` column whose `anti` rows route clicks to the anti input (optionally overriding the value column with `click_anti_value`). See the demo pages for working patterns.
 
 ## Chart gallery coverage
 

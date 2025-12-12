@@ -475,6 +475,109 @@ function getField(row, key) {
   return undefined;
 }
 
+function getClickInput(spec = {}) {
+  return spec.click_input || spec.clickInput;
+}
+
+function getClickAntiInput(spec = {}) {
+  return spec.click_anti_input || spec.clickAntiInput;
+}
+
+function getClickValueKey(spec = {}) {
+  return (
+    spec.click_value ||
+    spec.clickValue ||
+    spec.click_column ||
+    spec.clickColumn
+  );
+}
+
+function getClickAntiValueKey(spec = {}) {
+  return (
+    spec.click_anti_value ||
+    spec.clickAntiValue ||
+    spec.click_anti_column ||
+    spec.clickAntiColumn
+  );
+}
+
+function getClickActionKey(spec = {}) {
+  return spec.click_action || spec.clickAction;
+}
+
+function applyInputSelection(targetInput, rawValue, inputDefs, sourceEvent = null) {
+  if (rawValue === undefined || rawValue === null) return;
+  if (typeof window.ducksiteSetInput !== "function") {
+    console.warn("[ducksite] ducksiteSetInput is not defined; click ignored.");
+    return;
+  }
+
+  const inputsSnapshot =
+    typeof window.ducksiteGetInputs === "function" ? window.ducksiteGetInputs() : {};
+  const def = inputDefs && inputDefs[targetInput] ? inputDefs[targetInput] : {};
+  const multiple = isMultiple(def);
+
+  if (!multiple) {
+    window.ducksiteSetInput(targetInput, rawValue);
+    return;
+  }
+
+  const currentValues = normalizeMultiValues(inputsSnapshot[targetInput]);
+  const valueStr = String(rawValue);
+  const hasModifier = Boolean(sourceEvent && (sourceEvent.ctrlKey || sourceEvent.metaKey));
+
+  let next;
+  if (hasModifier) {
+    const exists = currentValues.includes(valueStr);
+    next = exists
+      ? currentValues.filter((v) => v !== valueStr)
+      : [...currentValues, valueStr];
+  } else {
+    next = [valueStr];
+  }
+
+  window.ducksiteSetInput(targetInput, next);
+}
+
+function extractChartClickValue(params, vizSpec, rows, valueKeyOverride = null) {
+  const valueKey = valueKeyOverride || getClickValueKey(vizSpec);
+  const idx = params && params.dataIndex;
+  if (valueKey && idx !== undefined && rows && rows[idx]) {
+    const fromRow = getField(rows[idx], valueKey);
+    if (fromRow !== undefined && fromRow !== null) return fromRow;
+  }
+
+  if (valueKey && params && params.data && params.data[valueKey] !== undefined) {
+    return params.data[valueKey];
+  }
+
+  if (vizSpec && vizSpec.x && idx !== undefined && rows && rows[idx]) {
+    const fromX = getField(rows[idx], vizSpec.x);
+    if (fromX !== undefined && fromX !== null) return fromX;
+  }
+
+  if (params && params.name !== undefined) return params.name;
+  if (params && typeof params.value === "string") return params.value;
+  return null;
+}
+
+function extractClickAction(params, vizSpec, rows) {
+  const actionKey = getClickActionKey(vizSpec);
+  if (!actionKey) return null;
+
+  const idx = params && params.dataIndex;
+  if (idx !== undefined && rows && rows[idx]) {
+    const fromRow = getField(rows[idx], actionKey);
+    if (fromRow !== undefined && fromRow !== null) return fromRow;
+  }
+
+  if (params && params.data && params.data[actionKey] !== undefined) {
+    return params.data[actionKey];
+  }
+
+  return null;
+}
+
 /**
  * Helpers for chart building
  */
@@ -776,7 +879,7 @@ async function initInputsUI(inputDefs, inputs, runQuery) {
  * full ECharts option JSON string. This keeps JSON *out* of the DSL while
  * still allowing all ECharts series types.
  */
-async function renderChart(container, vizSpec, rows, id) {
+async function renderChart(container, vizSpec, rows, id, inputDefs = {}) {
   const echarts = ensureEcharts();
   if (!echarts) return null;
 
@@ -889,6 +992,21 @@ async function renderChart(container, vizSpec, rows, id) {
     }
 
     chart.setOption(applyDarkTheme(option));
+    const clickInput = getClickInput(vizSpec);
+    const clickAntiInput = getClickAntiInput(vizSpec);
+    if ((clickInput || clickAntiInput) && typeof chart.on === "function") {
+      chart.on("click", (params) => {
+        const rawEvent = params && params.event ? params.event.event || params.event : null;
+        const action = extractClickAction(params, vizSpec, rows);
+        const isAnti = String(action || "").toLowerCase() === "anti";
+        const targetInput = isAnti && clickAntiInput ? clickAntiInput : clickInput;
+        if (!targetInput) return;
+
+        const valueKeyOverride = isAnti ? getClickAntiValueKey(vizSpec) : null;
+        const value = extractChartClickValue(params, vizSpec, rows, valueKeyOverride);
+        applyInputSelection(targetInput, value, inputDefs, rawEvent);
+      });
+    }
     return chart;
   }
 
@@ -1586,10 +1704,27 @@ async function renderChart(container, vizSpec, rows, id) {
   }
 
   chart.setOption(option);
+
+  const clickInput = getClickInput(vizSpec);
+  const clickAntiInput = getClickAntiInput(vizSpec);
+  if ((clickInput || clickAntiInput) && typeof chart.on === "function") {
+    chart.on("click", (params) => {
+      const rawEvent = params && params.event ? params.event.event || params.event : null;
+      const action = extractClickAction(params, vizSpec, rows);
+      const isAnti = String(action || "").toLowerCase() === "anti";
+      const targetInput = isAnti && clickAntiInput ? clickAntiInput : clickInput;
+      if (!targetInput) return;
+
+      const valueKeyOverride = isAnti ? getClickAntiValueKey(vizSpec) : null;
+      const value = extractChartClickValue(params, vizSpec, rows, valueKeyOverride);
+      applyInputSelection(targetInput, value, inputDefs, rawEvent);
+    });
+  }
+
   return chart;
 }
 
-function renderTable(container, rows, id, formatSpec) {
+function renderTable(container, rows, id, formatSpec, inputDefs = {}, tableSpec = {}) {
   console.debug("[ducksite] renderTable: rowCount", rows ? rows.length : 0);
   container.innerHTML = "";
 
@@ -1617,8 +1752,9 @@ function renderTable(container, rows, id, formatSpec) {
   table.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  for (const row of rows) {
+  rows.forEach((row, rowIdx) => {
     const tr = document.createElement("tr");
+    tr.dataset.rowIndex = String(rowIdx);
     for (const c of cols) {
       const td = document.createElement("td");
       td.textContent = row[c] != null ? String(row[c]) : "";
@@ -1648,10 +1784,40 @@ function renderTable(container, rows, id, formatSpec) {
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
-  }
+  });
   table.appendChild(tbody);
 
   container.appendChild(table);
+
+  const clickInput = getClickInput(tableSpec);
+  const clickAntiInput = getClickAntiInput(tableSpec);
+  if (clickInput || clickAntiInput) {
+    const clickValueKey = getClickValueKey(tableSpec);
+    const clickAntiValueKey = getClickAntiValueKey(tableSpec);
+    const clickActionKey = getClickActionKey(tableSpec);
+    tbody.addEventListener("click", (ev) => {
+      const td = ev.target.closest("td");
+      const tr = ev.target.closest("tr");
+      if (!td || !tr) return;
+
+      const rowIndex = Number(tr.dataset.rowIndex);
+      const colIdx = Array.from(tr.children).indexOf(td);
+      const row = rows[rowIndex];
+      if (!row) return;
+
+      const action = clickActionKey ? row[clickActionKey] : null;
+      const isAnti = String(action || "").toLowerCase() === "anti";
+      const targetInput = isAnti && clickAntiInput ? clickAntiInput : clickInput;
+      if (!targetInput) return;
+
+      const valueKey = isAnti
+        ? clickAntiValueKey || clickValueKey || cols[colIdx]
+        : clickValueKey || cols[colIdx];
+      const value = row[valueKey];
+
+      applyInputSelection(targetInput, value, inputDefs, ev);
+    });
+  }
 
   // Append the button last so it sits above the table in the stacking order
   attachDownloadButton(container, id, rows);
@@ -1884,7 +2050,13 @@ export async function renderAll(pageConfig, inputs, duckdbBundle, renderState = 
             continue;
           }
           const rows = await runQuery(queryId, vizSpec.format || null, null);
-          const chartInstance = await renderChart(container, vizSpec, rows, cellId);
+          const chartInstance = await renderChart(
+            container,
+            vizSpec,
+            rows,
+            cellId,
+            inputDefs,
+          );
           if (chartInstance) {
             charts.push(chartInstance);
           }
@@ -1920,7 +2092,14 @@ export async function renderAll(pageConfig, inputs, duckdbBundle, renderState = 
             continue;
           }
           const rows = await runQuery(queryId, null, tableSpec.format || null);
-          renderTable(container, rows, cellId, tableSpec.format || null);
+          renderTable(
+            container,
+            rows,
+            cellId,
+            tableSpec.format || null,
+            inputDefs,
+            tableSpec,
+          );
         }
       }
     }
