@@ -9,6 +9,7 @@ import socket
 import sys
 import threading
 import time
+import json
 from http import HTTPStatus
 from pathlib import Path
 
@@ -274,6 +275,17 @@ label: Country
     sql_text = sql_path.read_text(encoding="utf-8")
     assert sql_text.startswith("-- METRICS:")
     assert "SELECT 1 AS value" in sql_text
+
+    global_sql = site_root / "sql" / "_global" / "page_query.sql"
+    assert global_sql.exists()
+    global_sql_text = global_sql.read_text(encoding="utf-8")
+    assert not global_sql_text.startswith("-- METRICS:")
+    assert "SELECT 1 AS value" in global_sql_text
+
+    manifest = json.loads((site_root / "sql" / "_manifest.json").read_text(encoding="utf-8"))
+    views = manifest.get("views", {})
+    assert views.get("page_query", {}).get("num_files") == 0
+    assert views.get("page_query", {}).get("sql_path") == "/sql/_global/page_query.sql"
 
     contract = (site_root / "js" / "ducksite_contract.js").read_text(encoding="utf-8")
     assert "layoutGrid" in contract
