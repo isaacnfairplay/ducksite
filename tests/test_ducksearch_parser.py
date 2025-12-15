@@ -97,6 +97,14 @@ def test_single_statement_enforced(tmp_path: Path):
         parse_report_sql(_write_report(tmp_path, sql))
 
 
+def test_semicolon_inside_literal_and_comment_allowed(tmp_path: Path):
+    sql = """
+    SELECT 'a; -- not a delimiter'; -- trailing comment with ; should not split
+    """
+    report = parse_report_sql(_write_report(tmp_path, sql))
+    assert report.sql.strip().startswith("SELECT 'a; -- not a delimiter';")
+
+
 def test_param_type_parsing():
     opt_literal = parse_param_type("Optional[Literal['A','B']]")
     assert opt_literal.kind == "optional"

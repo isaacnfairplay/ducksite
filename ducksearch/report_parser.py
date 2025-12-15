@@ -80,9 +80,64 @@ def _extract_metadata(sql_text: str) -> tuple[Dict[str, Any], str]:
 
 
 def _ensure_single_statement(sql_text: str) -> None:
-    statements = [segment.strip() for segment in sql_text.split(";") if segment.strip()]
+    statements = _split_top_level_statements(sql_text)
     if len(statements) != 1:
         raise ValueError("Report SQL must contain exactly one statement")
+
+
+def _split_top_level_statements(sql_text: str) -> list[str]:
+    statements: list[str] = []
+    current: list[str] = []
+    in_string: str | None = None
+    in_line_comment = False
+    in_block_comment = False
+
+    i = 0
+    length = len(sql_text)
+    while i < length:
+        ch = sql_text[i]
+        next_ch = sql_text[i + 1] if i + 1 < length else ""
+
+        if in_string:
+            current.append(ch)
+            if ch == in_string:
+                if next_ch == in_string:
+                    current.append(next_ch)
+                    i += 1
+                else:
+                    in_string = None
+        elif in_line_comment:
+            if ch == "\n":
+                in_line_comment = False
+        elif in_block_comment:
+            if ch == "*" and next_ch == "/":
+                i += 1
+                in_block_comment = False
+        else:
+            if ch in {"'", '"'}:
+                in_string = ch
+                current.append(ch)
+            elif ch == "-" and next_ch == "-":
+                in_line_comment = True
+                i += 1
+            elif ch == "/" and next_ch == "*":
+                in_block_comment = True
+                i += 1
+            elif ch == ";":
+                segment = "".join(current).strip()
+                if segment:
+                    statements.append(segment)
+                current = []
+            else:
+                current.append(ch)
+
+        i += 1
+
+    tail = "".join(current).strip()
+    if tail:
+        statements.append(tail)
+
+    return statements
 
 
 def _parse_params(raw: Dict[str, Any], sql: str) -> List[Parameter]:
