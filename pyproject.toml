@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 ducksite = "ducksite.cli:main"
+ducksearch = "ducksearch.cli:main"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -22,7 +23,7 @@ build-backend = "setuptools.build_meta"
 package = true
 
 [tool.setuptools.packages.find]
-include = ["ducksite"]
+include = ["ducksite", "ducksearch"]
 exclude = ["demo"]
 
 [tool.setuptools.package-data]
@@ -31,7 +32,7 @@ ducksite = ["static_src/*.js", "static_src/*.css"]
 [tool.mypy]
 strict = true
 mypy_path = "stubs"
-files = ["ducksite"]
+files = ["ducksite", "ducksearch"]
 
 [tool.pytest.ini_options]
 markers = [
