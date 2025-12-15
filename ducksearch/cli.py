@@ -7,12 +7,14 @@ from typing import Iterable
 
 from .loader import validate_root
 from .report_parser import parse_report_sql
+from .server import run_server
 
 
 def handle_serve(args: argparse.Namespace) -> None:
     layout = validate_root(Path(args.root))
     _lint_reports(layout.reports)
     print(f"ducksearch serve ready on {args.host}:{args.port} with root {layout.root}")
+    run_server(layout, args.host, args.port)
 
 
 def handle_lint(args: argparse.Namespace) -> None:
