@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from ducksearch.report_parser import (
+    LintError,
     ParameterType,
     infer_scope,
     parse_param_type,
@@ -73,7 +74,7 @@ WITH filtered AS (
 )
 SELECT * FROM filtered
 """
-    with pytest.raises(ValueError):
+    with pytest.raises(LintError):
         parse_report_sql(_write_report(tmp_path, sql))
 
 
@@ -87,13 +88,13 @@ foo:
 ***/
 SELECT 1
 """
-    with pytest.raises(ValueError):
+    with pytest.raises(LintError):
         parse_report_sql(_write_report(tmp_path, sql))
 
 
 def test_single_statement_enforced(tmp_path: Path):
     sql = "SELECT 1; SELECT 2;"
-    with pytest.raises(ValueError):
+    with pytest.raises(LintError):
         parse_report_sql(_write_report(tmp_path, sql))
 
 
@@ -118,3 +119,63 @@ def test_param_type_parsing():
 
     scope = infer_scope("Widget", "SELECT * FROM t WHERE {{param Widget}}")
     assert scope == "data"
+
+
+def test_parquet_scan_rejects_concat(tmp_path: Path):
+    sql = """
+/***CONFIG
+DATA_ROOT: InjectedPathStr
+***/
+SELECT * FROM parquet_scan('{{config DATA_ROOT}}/' || 'demo.parquet');
+"""
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS011" in str(err.value)
+
+
+def test_illegal_sql_construct_rejected(tmp_path: Path):
+    sql = "ATTACH 'db.duckdb';"
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS012" in str(err.value)
+
+
+def test_placeholder_requires_metadata(tmp_path: Path):
+    sql = "SELECT {{config MISSING}};"
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS010" in str(err.value)
+
+
+def test_invalid_placeholder_type(tmp_path: Path):
+    sql = "SELECT {{foo bar}};"
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS009" in str(err.value)
+
+
+def test_binding_cycle_detected(tmp_path: Path):
+    sql = """
+/***PARAMS
+Key:
+  type: int
+***/
+/***BINDINGS
+- id: first
+  source: second
+  key_param: Key
+  key_column: k
+  value_column: v
+  kind: demo
+- id: second
+  source: first
+  key_param: Key
+  key_column: k
+  value_column: v
+  kind: demo
+***/
+SELECT 1;
+"""
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS013" in str(err.value)
