@@ -61,12 +61,12 @@ def execute_report(root: Path, report: Path, *, now: float | None = None, _seen:
 
     cache = _Cache(layout, report_key)
     replacements = _build_placeholder_replacements(parsed.sql, cache, import_paths)
-    prepared_sql = _rewrite_materialize(parsed.sql)
-    prepared_sql = _substitute_placeholders(prepared_sql, replacements)
+    materialization_sql = _substitute_placeholders(parsed.sql, replacements)
+    prepared_sql = _rewrite_materialize(materialization_sql)
 
     conn = duckdb.connect(database=":memory:")
     try:
-        mats = _prepare_materializations(conn, prepared_sql, cache, now)
+        mats = _prepare_materializations(conn, materialization_sql, cache, now)
         literal_sources = _materialize_literal_sources(conn, parsed.metadata.get("LITERAL_SOURCES") or [], cache, now)
         bindings = _materialize_bindings(conn, parsed.metadata.get("BINDINGS") or [], cache, now)
         base_path = cache.base
