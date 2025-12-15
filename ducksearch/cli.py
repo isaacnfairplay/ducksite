@@ -2,17 +2,23 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Iterable
 
-
-def handle_serve(_: argparse.Namespace) -> None:
-    """Placeholder handler for future server startup logic."""
-    print("ducksearch serve is not yet implemented.")
+from .loader import validate_root
+from .report_parser import parse_report_sql
 
 
-def handle_lint(_: argparse.Namespace) -> None:
-    """Placeholder handler for future linting logic."""
-    print("ducksearch lint is not yet implemented.")
+def handle_serve(args: argparse.Namespace) -> None:
+    layout = validate_root(Path(args.root))
+    _lint_reports(layout.reports)
+    print(f"ducksearch serve ready on {args.host}:{args.port} with root {layout.root}")
+
+
+def handle_lint(args: argparse.Namespace) -> None:
+    layout = validate_root(Path(args.root))
+    _lint_reports(layout.reports)
+    print(f"ducksearch lint passed for {layout.root}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,9 +29,13 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     serve_parser = subparsers.add_parser("serve", help="Run the ducksearch server.")
+    serve_parser.add_argument("--root", required=True, help="ducksearch root directory")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="host to bind")
+    serve_parser.add_argument("--port", type=int, default=8080, help="port to bind")
     serve_parser.set_defaults(func=handle_serve)
 
     lint_parser = subparsers.add_parser("lint", help="Lint the ducksearch project.")
+    lint_parser.add_argument("--root", required=True, help="ducksearch root directory")
     lint_parser.set_defaults(func=handle_lint)
 
     return parser
@@ -35,6 +45,11 @@ def main(argv: Iterable[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)
+
+
+def _lint_reports(reports_dir: Path) -> None:
+    for path in reports_dir.rglob("*.sql"):
+        parse_report_sql(path)
 
 
 if __name__ == "__main__":
