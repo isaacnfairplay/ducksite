@@ -26,8 +26,9 @@ def _make_minimal_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_serve_validates_root(capsys, tmp_path: Path):
+def test_serve_validates_root(capsys, tmp_path: Path, monkeypatch):
     root = _make_minimal_root(tmp_path)
+    monkeypatch.setattr(cli, "run_server", lambda *_, **__: None)
     cli.main(["serve", "--root", str(root)])
     captured = capsys.readouterr()
     assert "ready on" in captured.out
