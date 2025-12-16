@@ -454,8 +454,9 @@ def _detect_illegal_constructs(sql: str) -> None:
         statement = sql[match.start() :]
         copy_clause = statement.split(";", 1)[0]
         has_to = re.search(r"\bto\b", copy_clause, flags=re.IGNORECASE)
+        options_segment = copy_clause[has_to.end() :] if has_to else ""
         parquet_format = re.search(
-            r"\bformat\b[^;]*\bparquet\b", copy_clause, flags=re.IGNORECASE
+            r"\bformat\b[^;]*\bparquet\b", options_segment, flags=re.IGNORECASE
         )
         if not (has_to and parquet_format):
             raise LintError("DS012", "Illegal SQL construct detected: copy")

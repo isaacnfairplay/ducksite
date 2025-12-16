@@ -164,6 +164,13 @@ def test_copy_to_non_parquet_rejected(tmp_path: Path):
     assert "DS012" in str(err.value)
 
 
+def test_copy_requires_format_option(tmp_path: Path):
+    sql = "COPY (SELECT 'format parquet' AS msg) TO 'out.csv';"
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS012" in str(err.value)
+
+
 def test_placeholder_requires_metadata(tmp_path: Path):
     sql = "SELECT {{config MISSING}};"
     with pytest.raises(LintError) as err:
