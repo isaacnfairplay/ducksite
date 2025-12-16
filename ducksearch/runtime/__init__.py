@@ -75,16 +75,18 @@ def execute_report(
 
     parsed = parse_report_sql(report)
     validated_params = _validate_parameter_payload(payload or {}, parsed.parameters)
-    report_key = _cache_key(layout, report, validated_params)
 
     import_paths: Dict[str, Path] = {}
+    import_cache_keys: Dict[str, str] = {}
     for entry in parsed.metadata.get("IMPORTS") or []:
         target_rel = str(entry.get("report"))
         target_path = layout.reports / target_rel
         import_payload = _select_import_payload(payload or {}, entry.get("pass_params"))
         imported = execute_report(layout.root, target_path, payload=import_payload, now=now, _seen=seen)
         import_paths[str(entry.get("id"))] = imported.base
+        import_cache_keys[str(entry.get("id"))] = imported.base.stem
 
+    report_key = _cache_key(layout, report, validated_params, import_cache_keys)
     cache = _Cache(layout, report_key)
     replacements = _build_placeholder_replacements(parsed.sql, cache, import_paths, validated_params)
     materialization_sql = _substitute_placeholders(parsed.sql, replacements).rstrip(";\n\t ")
@@ -433,16 +435,24 @@ class _Cache:
         return self.layout.cache / "bindings" / f"{self.report_key}__{name}.parquet"
 
 
-def _cache_key(layout: RootLayout, report: Path, params: Mapping[str, _ValidatedParam] | None = None) -> str:
+def _cache_key(
+    layout: RootLayout,
+    report: Path,
+    params: Mapping[str, _ValidatedParam] | None = None,
+    import_cache_keys: Mapping[str, str] | None = None,
+) -> str:
     rel = report.relative_to(layout.reports)
     base_key = rel.with_suffix("").as_posix().replace("/", "__")
-    if not params:
+    if not params and not import_cache_keys:
         return base_key
 
     payload: MutableMapping[str, object] = {}
     for name, param in params.items():
         if param.apply_server:
             payload[name] = param.value
+
+    if import_cache_keys:
+        payload["__imports__"] = {k: import_cache_keys[k] for k in sorted(import_cache_keys)}
 
     if not payload:
         return base_key
