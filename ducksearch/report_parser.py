@@ -438,11 +438,27 @@ def _detect_illegal_constructs(sql: str) -> None:
         r"\bload\b",
         r"\bpragma\b",
         r"\bset\b",
+        r"\bcreate\b",
+        r"\balter\b",
+        r"\bdrop\b",
+        r"\binsert\b",
+        r"\bupdate\b",
+        r"\bdelete\b",
     ]
     for pattern in patterns:
         if re.search(pattern, sql, flags=re.IGNORECASE):
             keyword = pattern.strip("\\b")
             raise LintError("DS012", f"Illegal SQL construct detected: {keyword}")
+
+    for match in re.finditer(r"\bcopy\b", sql, flags=re.IGNORECASE):
+        statement = sql[match.start() :]
+        copy_clause = statement.split(";", 1)[0]
+        has_to = re.search(r"\bto\b", copy_clause, flags=re.IGNORECASE)
+        parquet_format = re.search(
+            r"\bformat\b[^;]*\bparquet\b", copy_clause, flags=re.IGNORECASE
+        )
+        if not (has_to and parquet_format):
+            raise LintError("DS012", "Illegal SQL construct detected: copy")
 
 
 def _validate_parquet_paths(sql: str) -> None:
