@@ -140,6 +140,37 @@ def test_illegal_sql_construct_rejected(tmp_path: Path):
     assert "DS012" in str(err.value)
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TABLE demo(id INT);",
+        "ALTER TABLE demo ADD COLUMN x INT;",
+        "DROP TABLE demo;",
+        "INSERT INTO demo VALUES (1);",
+        "UPDATE demo SET id = 2;",
+        "DELETE FROM demo;",
+    ],
+)
+def test_ddl_and_dml_constructs_rejected(tmp_path: Path, sql: str):
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS012" in str(err.value)
+
+
+def test_copy_to_non_parquet_rejected(tmp_path: Path):
+    sql = "COPY (SELECT 1) TO 'out.csv' (FORMAT CSV);"
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS012" in str(err.value)
+
+
+def test_copy_requires_format_option(tmp_path: Path):
+    sql = "COPY (SELECT 'format parquet' AS msg) TO 'out.csv';"
+    with pytest.raises(LintError) as err:
+        parse_report_sql(_write_report(tmp_path, sql))
+    assert "DS012" in str(err.value)
+
+
 def test_placeholder_requires_metadata(tmp_path: Path):
     sql = "SELECT {{config MISSING}};"
     with pytest.raises(LintError) as err:
