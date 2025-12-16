@@ -47,7 +47,7 @@ class _DucksearchHandler(BaseHTTPRequestHandler):
             self._json_response(400, {"error": "invalid report path"})
             return
         try:
-            result = execute_report(self.layout.root, report_path)
+            result = execute_report(self.layout.root, report_path, payload=params)
         except (FileNotFoundError, ExecutionError) as exc:
             self._json_response(400, {"error": str(exc)})
             return
