@@ -13,8 +13,11 @@ from .server import run_server
 def handle_serve(args: argparse.Namespace) -> None:
     layout = validate_root(Path(args.root))
     _lint_reports(layout.reports)
-    print(f"ducksearch serve ready on {args.host}:{args.port} with root {layout.root}")
-    run_server(layout, args.host, args.port)
+    print(
+        "ducksearch serve ready on "
+        f"{args.host}:{args.port} with root {layout.root} (workers={args.workers}, dev={args.dev})"
+    )
+    run_server(layout, args.host, args.port, dev=args.dev, workers=args.workers)
 
 
 def handle_lint(args: argparse.Namespace) -> None:
@@ -34,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--root", required=True, help="ducksearch root directory")
     serve_parser.add_argument("--host", default="127.0.0.1", help="host to bind")
     serve_parser.add_argument("--port", type=int, default=8080, help="port to bind")
+    serve_parser.add_argument("--workers", type=int, default=1, help="number of worker processes")
+    serve_parser.add_argument("--dev", action="store_true", help="enable development mode")
     serve_parser.set_defaults(func=handle_serve)
 
     lint_parser = subparsers.add_parser("lint", help="Lint the ducksearch project.")

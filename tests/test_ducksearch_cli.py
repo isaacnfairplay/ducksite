@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from ducksearch import cli
+from ducksearch.loader import validate_root
 
 
 def _make_minimal_root(tmp_path: Path) -> Path:
@@ -39,3 +40,44 @@ def test_lint_validates_reports(capsys, tmp_path: Path):
     cli.main(["lint", "--root", str(root)])
     captured = capsys.readouterr()
     assert "lint passed" in captured.out
+
+
+def test_serve_accepts_workers_and_dev(capsys, tmp_path: Path, monkeypatch):
+    root = _make_minimal_root(tmp_path)
+    called = {}
+
+    def fake_run_server(layout, host, port, *, dev, workers):
+        called.update(
+            {
+                "layout": layout,
+                "host": host,
+                "port": port,
+                "dev": dev,
+                "workers": workers,
+            }
+        )
+
+    monkeypatch.setattr(cli, "run_server", fake_run_server)
+    cli.main(
+        [
+            "serve",
+            "--root",
+            str(root),
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9090",
+            "--workers",
+            "2",
+            "--dev",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert "workers=2" in captured.out
+    assert called == {
+        "layout": validate_root(root),
+        "host": "0.0.0.0",
+        "port": 9090,
+        "dev": True,
+        "workers": 2,
+    }
