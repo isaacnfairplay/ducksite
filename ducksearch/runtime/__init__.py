@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Mapping, MutableMapping, Sequence
@@ -55,6 +56,12 @@ class _ValidatedParam:
     type: ParameterType
 
 
+@dataclass(frozen=True)
+class _BindingArtifacts:
+    paths: Dict[str, Path]
+    values: Dict[str, str]
+
+
 def execute_report(
     root: Path,
     report: Path,
@@ -75,6 +82,7 @@ def execute_report(
 
     parsed = parse_report_sql(report)
     validated_params = _validate_parameter_payload(payload or {}, parsed.parameters)
+    config_values = _select_config_values(parsed.metadata.get("CONFIG") or {}, _load_config(layout.config))
 
     import_paths: Dict[str, Path] = {}
     import_cache_keys: Dict[str, str] = {}
@@ -86,21 +94,42 @@ def execute_report(
         import_paths[str(entry.get("id"))] = imported.base
         import_cache_keys[str(entry.get("id"))] = imported.base.stem
 
-    report_key = _cache_key(layout, report, validated_params, import_cache_keys)
+    report_key = _cache_key(layout, report, validated_params, import_cache_keys, config_values)
     cache = _Cache(layout, report_key)
-    replacements = _build_placeholder_replacements(parsed.sql, cache, import_paths, validated_params)
+    replacements = _build_placeholder_replacements(
+        parsed.sql, cache, import_paths, validated_params, config_values
+    )
     materialization_sql = _substitute_placeholders(parsed.sql, replacements).rstrip(";\n\t ")
-    prepared_sql = _rewrite_materialize(materialization_sql)
 
     conn = duckdb.connect(database=":memory:")
     try:
-        mats = _prepare_materializations(conn, materialization_sql, cache, now)
+        binding_placeholder_fallbacks = {
+            f"bind {str(entry.get('id')).lower()}": "NULL"
+            for entry in parsed.metadata.get("BINDINGS") or []
+        }
+        fallback_materialization_sql = _substitute_placeholders(
+            materialization_sql, binding_placeholder_fallbacks
+        )
+        _prepare_materializations(conn, fallback_materialization_sql, cache, now)
+
+        bindings = _materialize_bindings(
+            conn, parsed.metadata.get("BINDINGS") or [], validated_params, cache, now
+        )
+        binding_replacements = _build_binding_replacements(parsed.metadata.get("BINDINGS") or [], bindings)
+        materialization_sql = _substitute_placeholders(materialization_sql, binding_replacements)
+        prepared_sql = _rewrite_materialize(materialization_sql)
+        mats = _prepare_materializations(conn, materialization_sql, cache, now, force=True)
         literal_sources = _materialize_literal_sources(conn, parsed.metadata.get("LITERAL_SOURCES") or [], cache, now)
-        bindings = _materialize_bindings(conn, parsed.metadata.get("BINDINGS") or [], cache, now)
+        final_sql = _substitute_placeholders(prepared_sql, binding_replacements)
         base_path = cache.base
         if _should_refresh(base_path, now):
-            conn.execute(f"copy ({prepared_sql}) to '{base_path.as_posix()}' (format 'parquet')")
-        return ExecutionResult(base=base_path, materialized=mats, literal_sources=literal_sources, bindings=bindings)
+            conn.execute(f"copy ({final_sql}) to '{base_path.as_posix()}' (format 'parquet')")
+        return ExecutionResult(
+            base=base_path,
+            materialized=mats,
+            literal_sources=literal_sources,
+            bindings=bindings.paths,
+        )
     except duckdb.Error as exc:  # pragma: no cover - defensive
         raise ExecutionError("DuckDB execution failed") from exc
 
@@ -153,11 +182,27 @@ def _validate_parameter_payload(payload: Mapping[str, object], parameters: Seque
     return validated
 
 
-def _prepare_materializations(conn: duckdb.DuckDBPyConnection, sql: str, cache: "_Cache", now: float) -> Dict[str, Path]:
+def _load_config(config_path: Path) -> Dict[str, object]:
+    with config_path.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def _select_config_values(config_meta: Mapping[str, object], config_values: Mapping[str, object]) -> Dict[str, object]:
+    selected: Dict[str, object] = {}
+    for name in config_meta.keys():
+        if name not in config_values:
+            raise ExecutionError(f"Missing config value for {name}")
+        selected[name] = config_values[name]
+    return selected
+
+
+def _prepare_materializations(
+    conn: duckdb.DuckDBPyConnection, sql: str, cache: "_Cache", now: float, *, force: bool = False
+) -> Dict[str, Path]:
     mats: Dict[str, Path] = {}
     for name, body in _extract_materialization_bodies(sql).items():
         path = cache.materialize_path(name)
-        if _should_refresh(path, now):
+        if force or _should_refresh(path, now):
             conn.execute(f"create or replace temp table {name} as {body}")
             conn.execute(f"copy (select * from {name}) to '{path.as_posix()}' (format 'parquet')")
         mats[name] = path
@@ -179,20 +224,49 @@ def _materialize_literal_sources(
     return outputs
 
 
-def _materialize_bindings(conn: duckdb.DuckDBPyConnection, entries: Iterable[Mapping[str, object]], cache: "_Cache", now: float) -> Dict[str, Path]:
-    outputs: Dict[str, Path] = {}
+def _materialize_bindings(
+    conn: duckdb.DuckDBPyConnection,
+    entries: Iterable[Mapping[str, object]],
+    params: Mapping[str, _ValidatedParam],
+    cache: "_Cache",
+    now: float,
+) -> _BindingArtifacts:
+    paths: Dict[str, Path] = {}
+    values: Dict[str, str] = {}
     for entry in entries:
         bind_id = str(entry.get("id"))
         source = str(entry.get("source"))
+        key_param = str(entry.get("key_param"))
         key_col = str(entry.get("key_column"))
         value_col = str(entry.get("value_column"))
+
+        binding_param = params.get(key_param)
+        if not binding_param or not binding_param.apply_server:
+            raise ExecutionError(f"Binding {bind_id} requires server parameter {key_param}")
+        key_value = _binding_key_value(binding_param.value, key_param)
+
         path = cache.binding_path(bind_id)
         if _should_refresh(path, now):
             conn.execute(
                 f"copy (select {key_col} as key, {value_col} as value from {source}) to '{path.as_posix()}' (format 'parquet')"
             )
-        outputs[bind_id] = path
-    return outputs
+        paths[bind_id] = path
+
+        row = conn.execute("select value from parquet_scan(?) where key = ?", [path.as_posix(), key_value]).fetchone()
+        if not row:
+            raise ExecutionError(f"No binding value for {bind_id}")
+        values[bind_id] = str(row[0])
+    return _BindingArtifacts(paths=paths, values=values)
+
+
+def _binding_key_value(raw_value: object | None, name: str) -> object:
+    if raw_value is None:
+        raise ExecutionError(f"Binding {name} requires a value")
+    if isinstance(raw_value, Sequence) and not isinstance(raw_value, (str, bytes)):
+        if len(raw_value) != 1:
+            raise ExecutionError(f"Binding {name} requires a single value")
+        return raw_value[0]
+    return raw_value
 
 
 def _rewrite_materialize(sql: str) -> str:
@@ -200,9 +274,15 @@ def _rewrite_materialize(sql: str) -> str:
 
 
 def _build_placeholder_replacements(
-    sql: str, cache: "_Cache", imports: Mapping[str, Path], params: Mapping[str, _ValidatedParam]
+    sql: str,
+    cache: "_Cache",
+    imports: Mapping[str, Path],
+    params: Mapping[str, _ValidatedParam],
+    config: Mapping[str, object],
 ) -> Dict[str, str]:
     replacements: Dict[str, str] = {}
+    for name, value in config.items():
+        replacements[f"config {name.lower()}"] = _escape_sql_string(str(value))
     for name in _materialized_ctes(sql):
         replacements[f"mat {name.lower()}"] = f"'{cache.materialize_path(name).as_posix()}'"
     for imp_id, path in imports.items():
@@ -212,6 +292,16 @@ def _build_placeholder_replacements(
         replacements[f"param {key}"] = _param_sql_literal(param.value if param.apply_server else None, param.type)
         replacements[f"ident {key}"] = _ident_sql_literal(param.value if param.apply_server else None, param.type)
         replacements[f"path {key}"] = _path_sql_literal(param.value if param.apply_server else None)
+    return replacements
+
+
+def _build_binding_replacements(entries: Iterable[Mapping[str, object]], bindings: _BindingArtifacts) -> Dict[str, str]:
+    replacements: Dict[str, str] = {}
+    for entry in entries:
+        bind_id = str(entry.get("id"))
+        value = bindings.values.get(bind_id)
+        if value is not None:
+            replacements[f"bind {bind_id.lower()}"] = _escape_sql_string(value)
     return replacements
 
 
@@ -440,19 +530,23 @@ def _cache_key(
     report: Path,
     params: Mapping[str, _ValidatedParam] | None = None,
     import_cache_keys: Mapping[str, str] | None = None,
+    config_values: Mapping[str, object] | None = None,
 ) -> str:
     rel = report.relative_to(layout.reports)
     base_key = rel.with_suffix("").as_posix().replace("/", "__")
-    if not params and not import_cache_keys:
+    if not params and not import_cache_keys and not config_values:
         return base_key
 
     payload: MutableMapping[str, object] = {}
-    for name, param in params.items():
+    for name, param in (params or {}).items():
         if param.apply_server:
             payload[name] = param.value
 
     if import_cache_keys:
         payload["__imports__"] = {k: import_cache_keys[k] for k in sorted(import_cache_keys)}
+
+    if config_values:
+        payload["__config__"] = {k: config_values[k] for k in sorted(config_values)}
 
     if not payload:
         return base_key
