@@ -6,8 +6,8 @@ from ducksearch.loader import CACHE_SUBDIRS
 from ducksearch.runtime import execute_report
 
 
-def _make_root(tmp_path: Path, sql: str) -> tuple[Path, Path]:
-    (tmp_path / "config.toml").write_text("name='demo'\n")
+def _make_root(tmp_path: Path, sql: str, *, config_text: str | None = None) -> tuple[Path, Path]:
+    (tmp_path / "config.toml").write_text(config_text or "name='demo'\n")
 
     for name in ["reports", "composites"]:
         (tmp_path / name).mkdir(parents=True, exist_ok=True)
@@ -117,3 +117,37 @@ SELECT {{ident ColumnName}}, {{path FilePath}} FROM (VALUES (7)) AS t(value);
     )
 
     assert _read_parquet(result.base) == [(7, data_path.as_posix())]
+
+
+def test_execute_report_resolves_config_and_bindings(tmp_path: Path):
+    data_root = tmp_path / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    sql = """
+/***CONFIG
+BASE_PATH: InjectedPathStr
+***/
+/***PARAMS
+LookupKey:
+  type: int
+  scope: data
+***/
+/***BINDINGS
+- id: key_lookup
+  source: binding_values
+  key_param: LookupKey
+  key_column: key
+  value_column: value
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES (1, 'alpha'), (2, 'beta')) AS t(key, value)
+)
+SELECT '{{config BASE_PATH}}/{{bind key_lookup}}' AS resolved;
+"""
+
+    config_text = f"name='demo'\nBASE_PATH='{data_root.as_posix()}'\n"
+    root, report = _make_root(tmp_path, sql, config_text=config_text)
+
+    result = execute_report(root, report, payload={"LookupKey": ["2"]})
+    assert _read_parquet(result.base) == [(f"{data_root.as_posix()}/beta",)]
