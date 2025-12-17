@@ -94,22 +94,32 @@ def execute_report(
         import_paths[str(entry.get("id"))] = imported.base
         import_cache_keys[str(entry.get("id"))] = imported.base.stem
 
-    report_key = _cache_key(layout, report, validated_params, import_cache_keys)
+    report_key = _cache_key(layout, report, validated_params, import_cache_keys, config_values)
     cache = _Cache(layout, report_key)
     replacements = _build_placeholder_replacements(
         parsed.sql, cache, import_paths, validated_params, config_values
     )
     materialization_sql = _substitute_placeholders(parsed.sql, replacements).rstrip(";\n\t ")
-    prepared_sql = _rewrite_materialize(materialization_sql)
 
     conn = duckdb.connect(database=":memory:")
     try:
-        mats = _prepare_materializations(conn, materialization_sql, cache, now)
-        literal_sources = _materialize_literal_sources(conn, parsed.metadata.get("LITERAL_SOURCES") or [], cache, now)
+        binding_placeholder_fallbacks = {
+            f"bind {str(entry.get('id')).lower()}": "NULL"
+            for entry in parsed.metadata.get("BINDINGS") or []
+        }
+        fallback_materialization_sql = _substitute_placeholders(
+            materialization_sql, binding_placeholder_fallbacks
+        )
+        _prepare_materializations(conn, fallback_materialization_sql, cache, now)
+
         bindings = _materialize_bindings(
             conn, parsed.metadata.get("BINDINGS") or [], validated_params, cache, now
         )
         binding_replacements = _build_binding_replacements(parsed.metadata.get("BINDINGS") or [], bindings)
+        materialization_sql = _substitute_placeholders(materialization_sql, binding_replacements)
+        prepared_sql = _rewrite_materialize(materialization_sql)
+        mats = _prepare_materializations(conn, materialization_sql, cache, now, force=True)
+        literal_sources = _materialize_literal_sources(conn, parsed.metadata.get("LITERAL_SOURCES") or [], cache, now)
         final_sql = _substitute_placeholders(prepared_sql, binding_replacements)
         base_path = cache.base
         if _should_refresh(base_path, now):
@@ -186,11 +196,13 @@ def _select_config_values(config_meta: Mapping[str, object], config_values: Mapp
     return selected
 
 
-def _prepare_materializations(conn: duckdb.DuckDBPyConnection, sql: str, cache: "_Cache", now: float) -> Dict[str, Path]:
+def _prepare_materializations(
+    conn: duckdb.DuckDBPyConnection, sql: str, cache: "_Cache", now: float, *, force: bool = False
+) -> Dict[str, Path]:
     mats: Dict[str, Path] = {}
     for name, body in _extract_materialization_bodies(sql).items():
         path = cache.materialize_path(name)
-        if _should_refresh(path, now):
+        if force or _should_refresh(path, now):
             conn.execute(f"create or replace temp table {name} as {body}")
             conn.execute(f"copy (select * from {name}) to '{path.as_posix()}' (format 'parquet')")
         mats[name] = path
@@ -518,19 +530,23 @@ def _cache_key(
     report: Path,
     params: Mapping[str, _ValidatedParam] | None = None,
     import_cache_keys: Mapping[str, str] | None = None,
+    config_values: Mapping[str, object] | None = None,
 ) -> str:
     rel = report.relative_to(layout.reports)
     base_key = rel.with_suffix("").as_posix().replace("/", "__")
-    if not params and not import_cache_keys:
+    if not params and not import_cache_keys and not config_values:
         return base_key
 
     payload: MutableMapping[str, object] = {}
-    for name, param in params.items():
+    for name, param in (params or {}).items():
         if param.apply_server:
             payload[name] = param.value
 
     if import_cache_keys:
         payload["__imports__"] = {k: import_cache_keys[k] for k in sorted(import_cache_keys)}
+
+    if config_values:
+        payload["__config__"] = {k: config_values[k] for k in sorted(config_values)}
 
     if not payload:
         return base_key
