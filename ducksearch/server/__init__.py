@@ -81,8 +81,10 @@ class _DucksearchHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def run_server(layout: RootLayout, host: str, port: int) -> None:
+def run_server(layout: RootLayout, host: str, port: int, *, dev: bool = False, workers: int = 1) -> None:
     """Start an HTTP server bound to ``host``/``port`` for ducksearch."""
+
+    _ = dev, workers  # currently unused but accepted for compatibility
 
     def handler(*args, **kwargs):  # type: ignore[override]
         return _DucksearchHandler(*args, layout=layout, **kwargs)
