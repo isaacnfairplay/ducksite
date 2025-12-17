@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from ducksearch.loader import CACHE_SUBDIRS
-from ducksearch.runtime import execute_report
+from ducksearch.runtime import ExecutionError, execute_report
 
 
 def _make_root(tmp_path: Path, sql: str, *, config_text: str | None = None) -> tuple[Path, Path]:
@@ -24,6 +25,14 @@ def _make_root(tmp_path: Path, sql: str, *, config_text: str | None = None) -> t
 def _read_parquet(path: Path) -> list[tuple]:
     conn = duckdb.connect(database=":memory:")
     return conn.execute(f"select * from parquet_scan('{path.as_posix()}')").fetchall()
+
+
+def test_execute_report_rejects_duplicate_param_casing(tmp_path: Path):
+    sql = "SELECT 1;\n"
+    root, report = _make_root(tmp_path, sql)
+
+    with pytest.raises(ExecutionError, match="Duplicate parameter key"):
+        execute_report(root, report, payload={"Widget": "1", "widget": "2"})
 
 
 def test_execute_report_applies_data_parameters(tmp_path: Path):

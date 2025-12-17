@@ -148,8 +148,13 @@ def _select_import_payload(payload: Mapping[str, object], pass_params: object) -
 
 def _validate_parameter_payload(payload: Mapping[str, object], parameters: Sequence[Parameter]) -> Dict[str, _ValidatedParam]:
     normalized: Dict[str, Sequence[object]] = {}
+    seen_keys: Dict[str, str] = {}
     for key, value in payload.items():
-        normalized[key.lower()] = _coerce_to_sequence(value)
+        lowered = key.lower()
+        if lowered in seen_keys and key != seen_keys[lowered]:
+            raise ExecutionError("Duplicate parameter key")
+        seen_keys[lowered] = key
+        normalized[lowered] = _coerce_to_sequence(value)
 
     force_all_server = _is_truthy(normalized.get("__force_server"))
     validated: Dict[str, _ValidatedParam] = {}
