@@ -47,15 +47,18 @@ def validate_root(root: Path) -> RootLayout:
     cache = root / "cache"
 
     missing: list[Path] = []
-    for path in (config, reports, composites, cache):
-        if not path.exists():
+    if not config.exists() or not config.is_file():
+        missing.append(config)
+
+    for path in (reports, composites, cache):
+        if not path.exists() or not path.is_dir():
             missing.append(path)
 
     if missing:
         missing_str = ", ".join(str(p) for p in missing)
         raise FileNotFoundError(f"Missing required paths: {missing_str}")
 
-    child_missing: list[Path] = [p for p in _expected_cache_dirs(cache) if not p.exists()]
+    child_missing: list[Path] = [p for p in _expected_cache_dirs(cache) if not p.exists() or not p.is_dir()]
     if child_missing:
         missing_str = ", ".join(str(p) for p in child_missing)
         raise FileNotFoundError(f"Missing required cache paths: {missing_str}")
