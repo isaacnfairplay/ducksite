@@ -1,3 +1,4 @@
+import runpy
 from pathlib import Path
 
 from ducksearch import cli
@@ -81,3 +82,16 @@ def test_serve_accepts_workers_and_dev(capsys, tmp_path: Path, monkeypatch):
         "dev": True,
         "workers": 2,
     }
+
+
+def test_module_entrypoint_invokes_cli(monkeypatch):
+    called = {}
+
+    def fake_main(argv=None):  # noqa: ARG001 - signature matches cli.main
+        called["argv"] = argv
+
+    monkeypatch.setattr(cli, "main", fake_main)
+
+    runpy.run_module("ducksearch", run_name="__main__", alter_sys=True)
+
+    assert called == {"argv": None}
