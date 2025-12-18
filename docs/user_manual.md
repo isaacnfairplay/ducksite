@@ -258,3 +258,7 @@ Use the interactive TUY commands when you want to adjust common project files wi
 5. Use `ducksite add|modify|remove toml|sql|md` (and `ducksite add plugin` when you need a virtual parquet scaffold) for quick adjustments without manually editing files.
 6. Run `ducksite build --root .` and open the generated `static/*.html` pages.
 7. Serve locally with `ducksite serve --root . --port 8080` when you are ready to demo.
+
+## Ducksearch path list bindings
+
+Use `value_mode: path_list_literal` when a report binding needs to inject file paths or URLs directly into a DuckDB list literal. The runtime keeps these entries literal (no wildcard or home expansion) and supports `drop_missing_paths: true` to discard missing local files while still returning an empty list when nothing remains.
