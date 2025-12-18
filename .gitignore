@@ -8,3 +8,4 @@ reload.bat
 extract_md_ai.py
 codebase.md
 node_modules/
+compress_to_zip.py
