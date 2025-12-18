@@ -23,7 +23,7 @@ from ducksearch.report_parser import (
     parse_report_sql,
 )
 
-CACHE_TTL_SECONDS = 300
+DEFAULT_CACHE_TTL_SECONDS = 300
 
 
 class ExecutionError(RuntimeError):
@@ -83,6 +83,7 @@ def execute_report(
     parsed = parse_report_sql(report)
     validated_params = _validate_parameter_payload(payload or {}, parsed.parameters)
     config_values = _select_config_values(parsed.metadata.get("CONFIG") or {}, _load_config(layout.config))
+    cache_ttl = _select_cache_ttl(parsed.metadata.get("CACHE"))
 
     import_paths: Dict[str, Path] = {}
     import_cache_keys: Dict[str, str] = {}
@@ -110,19 +111,21 @@ def execute_report(
         fallback_materialization_sql = _substitute_placeholders(
             materialization_sql, binding_placeholder_fallbacks
         )
-        _prepare_materializations(conn, fallback_materialization_sql, cache, now)
+        _prepare_materializations(conn, fallback_materialization_sql, cache, now, cache_ttl)
 
         bindings = _materialize_bindings(
-            conn, parsed.metadata.get("BINDINGS") or [], validated_params, cache, now
+            conn, parsed.metadata.get("BINDINGS") or [], validated_params, cache, now, cache_ttl
         )
         binding_replacements = _build_binding_replacements(parsed.metadata.get("BINDINGS") or [], bindings)
         materialization_sql = _substitute_placeholders(materialization_sql, binding_replacements)
         prepared_sql = _rewrite_materialize(materialization_sql)
-        mats = _prepare_materializations(conn, materialization_sql, cache, now, force=True)
-        literal_sources = _materialize_literal_sources(conn, parsed.metadata.get("LITERAL_SOURCES") or [], cache, now)
+        mats = _prepare_materializations(conn, materialization_sql, cache, now, cache_ttl, force=True)
+        literal_sources = _materialize_literal_sources(
+            conn, parsed.metadata.get("LITERAL_SOURCES") or [], cache, now, cache_ttl
+        )
         final_sql = _substitute_placeholders(prepared_sql, binding_replacements)
         base_path = cache.base
-        if _should_refresh(base_path, now):
+        if _should_refresh(base_path, now, cache_ttl):
             conn.execute(f"copy ({final_sql}) to '{base_path.as_posix()}' (format 'parquet')")
         return ExecutionResult(
             base=base_path,
@@ -192,6 +195,21 @@ def _load_config(config_path: Path) -> Dict[str, object]:
         return tomllib.load(fh)
 
 
+def _select_cache_ttl(cache_meta: Mapping[str, object] | None) -> float:
+    if not cache_meta:
+        return DEFAULT_CACHE_TTL_SECONDS
+    raw_ttl = cache_meta.get("ttl_seconds")
+    if raw_ttl is None:
+        return DEFAULT_CACHE_TTL_SECONDS
+    try:
+        ttl_value = float(raw_ttl)
+    except (TypeError, ValueError):
+        raise ExecutionError("CACHE ttl_seconds must be a positive number")
+    if ttl_value <= 0:
+        raise ExecutionError("CACHE ttl_seconds must be positive")
+    return ttl_value
+
+
 def _select_config_values(config_meta: Mapping[str, object], config_values: Mapping[str, object]) -> Dict[str, object]:
     selected: Dict[str, object] = {}
     for name in config_meta.keys():
@@ -202,12 +220,18 @@ def _select_config_values(config_meta: Mapping[str, object], config_values: Mapp
 
 
 def _prepare_materializations(
-    conn: duckdb.DuckDBPyConnection, sql: str, cache: "_Cache", now: float, *, force: bool = False
+    conn: duckdb.DuckDBPyConnection,
+    sql: str,
+    cache: "_Cache",
+    now: float,
+    ttl_seconds: float,
+    *,
+    force: bool = False,
 ) -> Dict[str, Path]:
     mats: Dict[str, Path] = {}
     for name, body in _extract_materialization_bodies(sql).items():
         path = cache.materialize_path(name)
-        if force or _should_refresh(path, now):
+        if force or _should_refresh(path, now, ttl_seconds):
             conn.execute(f"create or replace temp table {name} as {body}")
             conn.execute(f"copy (select * from {name}) to '{path.as_posix()}' (format 'parquet')")
         mats[name] = path
@@ -215,7 +239,11 @@ def _prepare_materializations(
 
 
 def _materialize_literal_sources(
-    conn: duckdb.DuckDBPyConnection, entries: Iterable[Mapping[str, object]], cache: "_Cache", now: float
+    conn: duckdb.DuckDBPyConnection,
+    entries: Iterable[Mapping[str, object]],
+    cache: "_Cache",
+    now: float,
+    ttl_seconds: float,
 ) -> Dict[str, Path]:
     outputs: Dict[str, Path] = {}
     for entry in entries:
@@ -223,7 +251,7 @@ def _materialize_literal_sources(
         value_col = str(entry.get("value_column"))
         lit_id = str(entry.get("id"))
         path = cache.literal_source_path(lit_id)
-        if _should_refresh(path, now):
+        if _should_refresh(path, now, ttl_seconds):
             conn.execute(f"copy (select {value_col} from {source}) to '{path.as_posix()}' (format 'parquet')")
         outputs[lit_id] = path
     return outputs
@@ -235,6 +263,7 @@ def _materialize_bindings(
     params: Mapping[str, _ValidatedParam],
     cache: "_Cache",
     now: float,
+    ttl_seconds: float,
 ) -> _BindingArtifacts:
     paths: Dict[str, Path] = {}
     values: Dict[str, str] = {}
@@ -251,7 +280,7 @@ def _materialize_bindings(
             raise ExecutionError(f"Binding {bind_id} cannot specify both key_param and key_sql")
         if not key_param and not key_sql:
             raise ExecutionError(f"Binding {bind_id} requires key_param or key_sql")
-        if value_mode not in {"single", "list"}:
+        if value_mode not in {"single", "list", "sql_list_literal"}:
             raise ExecutionError(f"Binding {bind_id} has invalid value_mode: {value_mode}")
 
         binding_param = params.get(str(key_param)) if key_param else None
@@ -260,7 +289,7 @@ def _materialize_bindings(
         key_value = _binding_key_value(binding_param.value, str(key_param)) if key_param else None
 
         path = cache.binding_path(bind_id)
-        if _should_refresh(path, now):
+        if _should_refresh(path, now, ttl_seconds):
             conn.execute(
                 f"copy (select {key_col} as key, {value_col} as value from {source}) to '{path.as_posix()}' (format 'parquet')"
             )
@@ -292,7 +321,7 @@ def _materialize_bindings(
         if len(rows) > 1 and value_mode == "single":
             sample = ", ".join(str(row[0]) for row in rows[:3])
             raise ExecutionError(f"Multiple binding values for {bind_id}: {sample}. Set value_mode: list to allow lists")
-        if value_mode == "list":
+        if value_mode in {"list", "sql_list_literal"}:
             values[bind_id] = _sql_list_literal([str(row[0]) for row in rows])
         else:
             values[bind_id] = str(rows[0][0])
@@ -374,7 +403,7 @@ def _build_binding_replacements(entries: Iterable[Mapping[str, object]], binding
         value = bindings.values.get(bind_id)
         if value is not None:
             value_mode = str(entry.get("value_mode") or "single")
-            if value_mode == "list":
+            if value_mode in {"list", "sql_list_literal"}:
                 replacements[f"bind {bind_id.lower()}"] = value
             else:
                 replacements[f"bind {bind_id.lower()}"] = _escape_sql_string(value)
@@ -579,10 +608,10 @@ def _extract_materialization_bodies(sql: str) -> Dict[str, str]:
     return bodies
 
 
-def _should_refresh(path: Path, now: float) -> bool:
+def _should_refresh(path: Path, now: float, ttl_seconds: float) -> bool:
     if not path.exists():
         return True
-    return (now - path.stat().st_mtime) > CACHE_TTL_SECONDS
+    return (now - path.stat().st_mtime) > ttl_seconds
 
 
 class _Cache:

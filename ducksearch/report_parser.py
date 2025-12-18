@@ -276,7 +276,14 @@ def _validate_metadata_schema(metadata: Dict[str, Any]) -> None:
             for key, val in value.items():
                 if not isinstance(val, str):
                     raise LintError("DS002", f"CONFIG {key} must be a string type hint")
-        elif block in {"SOURCES", "CACHE", "TABLE", "SEARCH", "FACETS", "CHARTS", "DERIVED_PARAMS", "SECRETS"}:
+        elif block == "CACHE":
+            _ensure_mapping(value, "DS002", "CACHE block must be a mapping")
+            ttl = value.get("ttl_seconds") if isinstance(value, dict) else None
+            if ttl is not None and (isinstance(ttl, bool) or not isinstance(ttl, (int, float))):
+                raise LintError("DS002", "CACHE ttl_seconds must be a number")
+            if isinstance(ttl, (int, float)) and ttl <= 0:
+                raise LintError("DS002", "CACHE ttl_seconds must be positive")
+        elif block in {"SOURCES", "TABLE", "SEARCH", "FACETS", "CHARTS", "DERIVED_PARAMS", "SECRETS"}:
             _ensure_mapping(value, "DS002", f"{block} block must be a mapping")
         elif block == "LITERAL_SOURCES":
             _ensure_list_of_dicts(value, "DS002", "LITERAL_SOURCES must be a list of mappings")
@@ -294,8 +301,8 @@ def _validate_metadata_schema(metadata: Dict[str, Any]) -> None:
                     raise LintError("DS002", "BINDINGS entries require key_param or key_sql")
                 if entry.get("key_param") and entry.get("key_sql"):
                     raise LintError("DS002", "BINDINGS entries cannot set both key_param and key_sql")
-                if entry.get("value_mode") and entry.get("value_mode") not in {"single", "list"}:
-                    raise LintError("DS002", "BINDINGS value_mode must be single or list")
+                if entry.get("value_mode") and entry.get("value_mode") not in {"single", "list", "sql_list_literal"}:
+                    raise LintError("DS002", "BINDINGS value_mode must be single, list, or sql_list_literal")
         elif block == "IMPORTS":
             _ensure_list_of_dicts(value, "DS002", "IMPORTS must be a list of mappings")
             for entry in value:
@@ -481,6 +488,9 @@ def _validate_parquet_paths(sql: str) -> None:
         if "||" in _strip_comments(stripped_arg):
             raise LintError("DS011", "parquet_scan path must not use string concatenation")
         if stripped_arg[0:1] not in {"'", '"'}:
+            placeholder = PLACEHOLDER_RE.match(stripped_arg)
+            if placeholder and placeholder.group(1).lower() == "bind":
+                continue
             raise LintError("DS011", "parquet_scan path must be a string literal")
 
 
