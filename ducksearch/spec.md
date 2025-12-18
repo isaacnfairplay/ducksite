@@ -571,6 +571,35 @@ FROM parquet_scan(
 );
 ```
 
+### Derived binding keys
+
+Bindings may derive lookup keys with SQL instead of a direct `key_param`:
+
+```yaml
+key_sql: "select substr({{param Barcode}}, 1, 20) as key"
+```
+
+Rules:
+
+* `key_param` and `key_sql` are **mutually exclusive**.
+* `key_sql` may reference `{{param ...}}` placeholders only when the params are server-applied.
+* The query must produce exactly one column and at least one row.
+* Set `value_mode: list` to allow multiple binding values (returned as a DuckDB list literal). Default `single` errors on multiple values.
+
+Example:
+
+```sql
+/***BINDINGS
+- id: partitions_for_barcode
+  source: barcode_partitions
+  key_sql: "select substr({{param Barcode}}, 1, 20)"
+  key_column: prefix20
+  value_column: file_path
+  value_mode: list
+  kind: partition
+***/
+```
+
 ---
 
 ## 13. Imports

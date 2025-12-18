@@ -4,6 +4,7 @@ import duckdb
 import pytest
 
 from ducksearch.loader import CACHE_SUBDIRS
+from ducksearch.report_parser import LintError
 from ducksearch.runtime import ExecutionError, execute_report
 
 
@@ -160,3 +161,164 @@ SELECT '{{config BASE_PATH}}/{{bind key_lookup}}' AS resolved;
 
     result = execute_report(root, report, payload={"LookupKey": ["2"]})
     assert _read_parquet(result.base) == [(f"{data_root.as_posix()}/beta",)]
+
+
+def test_binding_key_sql_resolves_value(tmp_path: Path):
+    sql = """
+/***PARAMS
+Barcode:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: key_lookup
+  source: binding_values
+  key_sql: "select substr({{param Barcode}}, 1, 3) as key"
+  key_column: key
+  value_column: value
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('ABC', 'alpha'), ('XYZ', 'omega')) AS t(key, value)
+)
+SELECT '{{bind key_lookup}}' AS bound_value;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report, payload={"Barcode": ["ABC-123"]})
+    assert _read_parquet(result.base) == [("alpha",)]
+
+
+def test_binding_key_sql_list_mode(tmp_path: Path):
+    sql = """
+/***PARAMS
+Barcode:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: files
+  source: binding_values
+  key_sql: |
+    select substr({{param Barcode}}, 1, 2) || suffix as key
+    from (VALUES ('01'), ('02')) AS t(suffix)
+  key_column: key
+  value_column: file_path
+  value_mode: list
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('AA01', 'file1.parquet'), ('AA02', 'file2.parquet')) AS t(key, file_path)
+)
+SELECT {{bind files}} AS selected_files;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report, payload={"Barcode": ["AA999"]})
+    files_list = _read_parquet(result.base)[0][0]
+    assert set(files_list) == {"file1.parquet", "file2.parquet"}
+
+
+def test_binding_key_sql_rejects_dual_keys(tmp_path: Path):
+    sql = """
+/***PARAMS
+Widget:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: invalid
+  source: binding_values
+  key_param: Widget
+  key_sql: "select {{param Widget}} as key"
+  key_column: key
+  value_column: value
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('a', 'alpha')) AS t(key, value)
+)
+SELECT 1;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    with pytest.raises(LintError, match="cannot set both key_param and key_sql"):
+        execute_report(root, report, payload={"Widget": ["a"]})
+
+
+def test_binding_key_sql_requires_server_param(tmp_path: Path):
+    sql = """
+/***PARAMS
+ClientOnly:
+  type: str
+  scope: view
+***/
+/***BINDINGS
+- id: client
+  source: binding_values
+  key_sql: "select {{param ClientOnly}} as key"
+  key_column: key
+  value_column: value
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('value', 'ok')) AS t(key, value)
+)
+SELECT 1;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    with pytest.raises(ExecutionError, match="requires server parameter ClientOnly"):
+        execute_report(root, report, payload={"ClientOnly": ["value"]})
+
+
+def test_binding_key_sql_requires_keys(tmp_path: Path):
+    sql = """
+/***PARAMS
+Barcode:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: missing
+  source: binding_values
+  key_sql: "select * from (select 1 as key) where 1=0"
+  key_column: key
+  value_column: value
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES (1, 'value')) AS t(key, value)
+)
+SELECT 1;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    with pytest.raises(ExecutionError, match="No binding keys produced"):
+        execute_report(root, report, payload={"Barcode": ["any"]})
+
+
+def test_binding_key_sql_multiple_values_single_mode(tmp_path: Path):
+    sql = """
+/***PARAMS
+Barcode:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: multi
+  source: binding_values
+  key_sql: "select substr({{param Barcode}}, 1, 2) as key union all select substr({{param Barcode}}, 1, 2)"
+  key_column: key
+  value_column: value
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('AB', 'first'), ('AB', 'second')) AS t(key, value)
+)
+SELECT 1;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    with pytest.raises(ExecutionError, match="Multiple binding values for multi"):
+        execute_report(root, report, payload={"Barcode": ["AB-001"]})
