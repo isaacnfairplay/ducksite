@@ -291,7 +291,7 @@ def _build_placeholder_replacements(
     for name in _materialized_ctes(sql):
         replacements[f"mat {name.lower()}"] = f"'{cache.materialize_path(name).as_posix()}'"
     for imp_id, path in imports.items():
-        replacements[f"import {imp_id.lower()}"] = f"'{path.as_posix()}'"
+        replacements[f"import {imp_id.lower()}"] = path.as_posix()
     for name, param in params.items():
         key = name.lower()
         replacements[f"param {key}"] = _param_sql_literal(param.value if param.apply_server else None, param.type)

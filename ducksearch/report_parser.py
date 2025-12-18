@@ -27,7 +27,9 @@ SUPPORTED_BLOCKS: tuple[str, ...] = (
 )
 
 METADATA_RE = re.compile(r"/\*{3}([A-Z_]+)\s*(.*?)\*{3}/", re.DOTALL)
-CTE_DEF_RE = re.compile(r"\b([A-Za-z0-9_]+)\b\s+AS\s*\(", re.IGNORECASE)
+CTE_DEF_RE = re.compile(
+    r"\b([A-Za-z0-9_]+)\b\s+AS\s+(?:MATERIALIZE(?:_CLOSED)?\s*)?\(", re.IGNORECASE
+)
 MATERIALIZE_RE = re.compile(
     r"\b([A-Za-z0-9_]+)\b\s+AS\s+MATERIALIZE(?:_CLOSED)?\s*\(", re.IGNORECASE
 )
