@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import duckdb
@@ -322,3 +323,63 @@ SELECT 1;
 
     with pytest.raises(ExecutionError, match="Multiple binding values for multi"):
         execute_report(root, report, payload={"Barcode": ["AB-001"]})
+
+
+def test_binding_sql_list_literal_paths(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    file_a = data_dir / "alpha.parquet"
+    file_b = data_dir / "oreilly's.parquet"
+
+    conn = duckdb.connect(database=":memory:")
+    conn.execute("copy (select 'a' as val) to ? (format 'parquet')", [file_a.as_posix()])
+    conn.execute("copy (select 'b' as val) to ? (format 'parquet')", [file_b.as_posix()])
+
+    file_a_sql = file_a.as_posix().replace("'", "''")
+    file_b_sql = file_b.as_posix().replace("'", "''")
+
+    sql = """
+/***PARAMS
+Key:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: file_list
+  source: binding_values
+  key_param: Key
+  key_column: key
+  value_column: path
+  value_mode: sql_list_literal
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('alpha', '__PATH_A__'), ('alpha', '__PATH_B__')) AS t(key, path)
+)
+SELECT val FROM parquet_scan({{bind file_list}}, union_by_name=true) ORDER BY val;
+"""
+    sql = sql.replace("__PATH_A__", file_a_sql).replace("__PATH_B__", file_b_sql)
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report, payload={"Key": ["alpha"]})
+    assert _read_parquet(result.base) == [("a",), ("b",)]
+
+
+def test_execute_report_respects_cache_metadata_ttl(tmp_path: Path):
+    sql = """
+/***CACHE
+ttl_seconds: 86400
+***/
+SELECT 1;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report)
+    past_mtime = 100.0
+    os.utime(result.base, (past_mtime, past_mtime))
+
+    refreshed = execute_report(root, report, now=past_mtime + 500)
+
+    assert refreshed.base == result.base
+    assert refreshed.base.stat().st_mtime == past_mtime
