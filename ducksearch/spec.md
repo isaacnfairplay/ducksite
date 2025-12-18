@@ -585,6 +585,7 @@ Rules:
 * `key_sql` may reference `{{param ...}}` placeholders only when the params are server-applied.
 * The query must produce exactly one column and at least one row.
 * Set `value_mode: list` to allow multiple binding values (returned as a DuckDB list literal). Default `single` errors on multiple values.
+* Use `value_mode: path_list_literal` only when the binding values are file paths or URLs that should be injected directly as a DuckDB list literal. Paths are treated as literal strings (no wildcard or home expansion) and may be filtered with `drop_missing_paths: true` to drop non-existent local files while still allowing an empty list when nothing is left.
 
 Example:
 

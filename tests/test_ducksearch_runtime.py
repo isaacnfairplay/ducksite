@@ -325,7 +325,7 @@ SELECT 1;
         execute_report(root, report, payload={"Barcode": ["AB-001"]})
 
 
-def test_binding_sql_list_literal_paths(tmp_path: Path):
+def test_binding_path_list_literal_paths(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -351,7 +351,7 @@ Key:
   key_param: Key
   key_column: key
   value_column: path
-  value_mode: sql_list_literal
+  value_mode: path_list_literal
   kind: demo
 ***/
 WITH binding_values AS MATERIALIZE_CLOSED (
@@ -364,6 +364,104 @@ SELECT val FROM parquet_scan({{bind file_list}}, union_by_name=true) ORDER BY va
 
     result = execute_report(root, report, payload={"Key": ["alpha"]})
     assert _read_parquet(result.base) == [("a",), ("b",)]
+
+
+def test_binding_path_list_literal_drops_missing(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    file_a = data_dir / "alpha.parquet"
+    duckdb.connect(database=":memory:").execute(
+        "copy (select 'a' as val) to ? (format 'parquet')", [file_a.as_posix()]
+    )
+
+    missing = data_dir / "missing.parquet"
+
+    sql = """
+/***PARAMS
+Key:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: file_list
+  source: binding_values
+  key_param: Key
+  key_column: key
+  value_column: path
+  value_mode: path_list_literal
+  drop_missing_paths: true
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('alpha', '__PATH_A__'), ('alpha', '__MISSING__')) AS t(key, path)
+)
+SELECT {{bind file_list}} AS files;
+"""
+    sql = sql.replace("__PATH_A__", file_a.as_posix()).replace("__MISSING__", missing.as_posix())
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report, payload={"Key": ["alpha"]})
+    assert _read_parquet(result.base) == [([file_a.as_posix()],)]
+
+
+def test_binding_path_list_literal_rejects_globs(tmp_path: Path):
+    sql = """
+/***PARAMS
+Key:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: file_list
+  source: binding_values
+  key_param: Key
+  key_column: key
+  value_column: path
+  value_mode: path_list_literal
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('alpha', '../*.parquet')) AS t(key, path)
+)
+SELECT 1;
+"""
+    root, report = _make_root(tmp_path, sql)
+
+    with pytest.raises(ExecutionError, match="unsupported wildcard path"):
+        execute_report(root, report, payload={"Key": ["alpha"]})
+
+
+def test_binding_path_list_literal_allows_urls(tmp_path: Path):
+    query_url = "https://example.com/data?shard=1"
+    ipv6_url = "http://[::1]/data.parquet"
+
+    sql = """
+/***PARAMS
+Key:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: file_list
+  source: binding_values
+  key_param: Key
+  key_column: key
+  value_column: path
+  value_mode: path_list_literal
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('alpha', '__QUERY_URL__'), ('alpha', '__IPV6_URL__')) AS t(key, path)
+)
+SELECT {{bind file_list}} AS files;
+"""
+    sql = sql.replace("__QUERY_URL__", query_url).replace("__IPV6_URL__", ipv6_url)
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report, payload={"Key": ["alpha"]})
+
+    assert _read_parquet(result.base) == [([query_url, ipv6_url],)]
 
 
 def test_execute_report_respects_cache_metadata_ttl(tmp_path: Path):

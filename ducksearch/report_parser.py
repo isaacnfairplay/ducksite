@@ -301,8 +301,8 @@ def _validate_metadata_schema(metadata: Dict[str, Any]) -> None:
                     raise LintError("DS002", "BINDINGS entries require key_param or key_sql")
                 if entry.get("key_param") and entry.get("key_sql"):
                     raise LintError("DS002", "BINDINGS entries cannot set both key_param and key_sql")
-                if entry.get("value_mode") and entry.get("value_mode") not in {"single", "list", "sql_list_literal"}:
-                    raise LintError("DS002", "BINDINGS value_mode must be single, list, or sql_list_literal")
+                if entry.get("value_mode") and entry.get("value_mode") not in {"single", "list", "path_list_literal"}:
+                    raise LintError("DS002", "BINDINGS value_mode must be single, list, or path_list_literal")
         elif block == "IMPORTS":
             _ensure_list_of_dicts(value, "DS002", "IMPORTS must be a list of mappings")
             for entry in value:

@@ -280,7 +280,7 @@ def _materialize_bindings(
             raise ExecutionError(f"Binding {bind_id} cannot specify both key_param and key_sql")
         if not key_param and not key_sql:
             raise ExecutionError(f"Binding {bind_id} requires key_param or key_sql")
-        if value_mode not in {"single", "list", "sql_list_literal"}:
+        if value_mode not in {"single", "list", "path_list_literal"}:
             raise ExecutionError(f"Binding {bind_id} has invalid value_mode: {value_mode}")
 
         binding_param = params.get(str(key_param)) if key_param else None
@@ -316,15 +316,27 @@ def _materialize_bindings(
         else:
             rows = conn.execute("select value from parquet_scan(?) where key = ?", [path.as_posix(), key_value]).fetchall()
 
-        if not rows:
+        drop_missing_paths = bool(entry.get("drop_missing_paths")) if value_mode == "path_list_literal" else False
+
+        row_values = [str(row[0]) for row in rows]
+        if value_mode == "path_list_literal":
+            _validate_literal_paths(row_values, bind_id)
+            if drop_missing_paths:
+                row_values = [val for val in row_values if _path_literal_exists(val)]
+
+        if not row_values:
+            if drop_missing_paths and value_mode == "path_list_literal":
+                values[bind_id] = _sql_list_literal([])
+                continue
             raise ExecutionError(f"No binding value for {bind_id}")
-        if len(rows) > 1 and value_mode == "single":
-            sample = ", ".join(str(row[0]) for row in rows[:3])
+
+        if len(row_values) > 1 and value_mode == "single":
+            sample = ", ".join(row_values[:3])
             raise ExecutionError(f"Multiple binding values for {bind_id}: {sample}. Set value_mode: list to allow lists")
-        if value_mode in {"list", "sql_list_literal"}:
-            values[bind_id] = _sql_list_literal([str(row[0]) for row in rows])
+        if value_mode in {"list", "path_list_literal"}:
+            values[bind_id] = _sql_list_literal(row_values)
         else:
-            values[bind_id] = str(rows[0][0])
+            values[bind_id] = row_values[0]
     return _BindingArtifacts(paths=paths, values=values)
 
 
@@ -403,7 +415,7 @@ def _build_binding_replacements(entries: Iterable[Mapping[str, object]], binding
         value = bindings.values.get(bind_id)
         if value is not None:
             value_mode = str(entry.get("value_mode") or "single")
-            if value_mode in {"list", "sql_list_literal"}:
+            if value_mode in {"list", "path_list_literal"}:
                 replacements[f"bind {bind_id.lower()}"] = value
             else:
                 replacements[f"bind {bind_id.lower()}"] = _escape_sql_string(value)
@@ -584,6 +596,28 @@ def _escape_identifier(value: str) -> str:
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value):
         raise ExecutionError("Invalid identifier")
     return value
+
+
+def _validate_literal_paths(paths: Sequence[str], bind_id: str) -> None:
+    for path in paths:
+        is_url = re.match(r"^[a-zA-Z0-9.+-]+://", path)
+
+        if path.startswith("~"):
+            raise ExecutionError(f"Binding {bind_id} cannot expand user home in paths")
+
+        if is_url:
+            if "*" in path:
+                raise ExecutionError(f"Binding {bind_id} contains unsupported wildcard path")
+            continue
+
+        if re.search(r"[\\*\?\[]", path):
+            raise ExecutionError(f"Binding {bind_id} contains unsupported wildcard path")
+
+
+def _path_literal_exists(path: str) -> bool:
+    if re.match(r"^[a-zA-Z0-9]+://", path):
+        return True
+    return Path(path).exists()
 
 
 def _sql_list_literal(values: Sequence[str]) -> str:
