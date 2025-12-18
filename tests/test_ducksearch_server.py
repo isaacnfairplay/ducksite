@@ -93,3 +93,48 @@ def test_serve_runs_report(tmp_path: Path):
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_serve_renders_html_preview(tmp_path: Path):
+    root = _make_minimal_root(tmp_path)
+    host = "127.0.0.1"
+    port = _pick_free_port()
+    base_url = f"http://{host}:{port}"
+
+    proc = subprocess.Popen(
+        [
+            "python",
+            "-m",
+            "ducksearch.cli",
+            "serve",
+            "--root",
+            str(root),
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        _wait_for_health(base_url, proc)
+
+        with request.urlopen(
+            f"{base_url}/report?report=demo/example.sql&format=html", timeout=5
+        ) as resp:
+            assert resp.status == 200
+            assert resp.headers.get_content_type() == "text/html"
+            payload = resp.read().decode("utf-8")
+        assert "ducksearch HTML preview" in payload
+        assert "base_parquet" in payload
+        assert "DuckDB-Wasm" in payload
+        assert "preview-search" in payload
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)

@@ -1,0 +1,4 @@
+name = "ducksearch-deep-demos"
+DATA_ROOT = "ducksearch/demos/deep_demos"
+DEFAULT_WINDOW = 3
+DEFAULT_REGION = "north"
