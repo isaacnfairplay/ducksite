@@ -432,6 +432,38 @@ SELECT 1;
         execute_report(root, report, payload={"Key": ["alpha"]})
 
 
+def test_binding_path_list_literal_allows_urls(tmp_path: Path):
+    query_url = "https://example.com/data?shard=1"
+    ipv6_url = "http://[::1]/data.parquet"
+
+    sql = """
+/***PARAMS
+Key:
+  type: str
+  scope: data
+***/
+/***BINDINGS
+- id: file_list
+  source: binding_values
+  key_param: Key
+  key_column: key
+  value_column: path
+  value_mode: path_list_literal
+  kind: demo
+***/
+WITH binding_values AS MATERIALIZE_CLOSED (
+  SELECT * FROM (VALUES ('alpha', '__QUERY_URL__'), ('alpha', '__IPV6_URL__')) AS t(key, path)
+)
+SELECT {{bind file_list}} AS files;
+"""
+    sql = sql.replace("__QUERY_URL__", query_url).replace("__IPV6_URL__", ipv6_url)
+    root, report = _make_root(tmp_path, sql)
+
+    result = execute_report(root, report, payload={"Key": ["alpha"]})
+
+    assert _read_parquet(result.base) == [([query_url, ipv6_url],)]
+
+
 def test_execute_report_respects_cache_metadata_ttl(tmp_path: Path):
     sql = """
 /***CACHE

@@ -600,10 +600,18 @@ def _escape_identifier(value: str) -> str:
 
 def _validate_literal_paths(paths: Sequence[str], bind_id: str) -> None:
     for path in paths:
-        if re.search(r"[\\*\?\[]", path):
-            raise ExecutionError(f"Binding {bind_id} contains unsupported wildcard path")
+        is_url = re.match(r"^[a-zA-Z0-9.+-]+://", path)
+
         if path.startswith("~"):
             raise ExecutionError(f"Binding {bind_id} cannot expand user home in paths")
+
+        if is_url:
+            if "*" in path:
+                raise ExecutionError(f"Binding {bind_id} contains unsupported wildcard path")
+            continue
+
+        if re.search(r"[\\*\?\[]", path):
+            raise ExecutionError(f"Binding {bind_id} contains unsupported wildcard path")
 
 
 def _path_literal_exists(path: str) -> bool:
