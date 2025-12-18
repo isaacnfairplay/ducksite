@@ -287,9 +287,15 @@ def _validate_metadata_schema(metadata: Dict[str, Any]) -> None:
         elif block == "BINDINGS":
             _ensure_list_of_dicts(value, "DS002", "BINDINGS must be a list of mappings")
             for entry in value:
-                for key in ("id", "source", "key_param", "key_column", "value_column", "kind"):
+                for key in ("id", "source", "key_column", "value_column", "kind"):
                     if key not in entry:
                         raise LintError("DS002", f"BINDINGS entries require {key}")
+                if not entry.get("key_param") and not entry.get("key_sql"):
+                    raise LintError("DS002", "BINDINGS entries require key_param or key_sql")
+                if entry.get("key_param") and entry.get("key_sql"):
+                    raise LintError("DS002", "BINDINGS entries cannot set both key_param and key_sql")
+                if entry.get("value_mode") and entry.get("value_mode") not in {"single", "list"}:
+                    raise LintError("DS002", "BINDINGS value_mode must be single or list")
         elif block == "IMPORTS":
             _ensure_list_of_dicts(value, "DS002", "IMPORTS must be a list of mappings")
             for entry in value:
@@ -327,7 +333,7 @@ def _validate_cross_references(metadata: Dict[str, Any], params: List[Parameter]
             raise LintError("DS003", f"Duplicate binding id: {bind_id}")
         seen_bind_ids.add(bind_id)
         key_param = binding.get("key_param")
-        if key_param not in param_names:
+        if key_param and key_param not in param_names:
             raise LintError("DS010", f"Binding {bind_id} refers to missing param {key_param}")
 
     imports = metadata.get("IMPORTS") or []

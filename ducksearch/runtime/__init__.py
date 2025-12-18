@@ -241,14 +241,23 @@ def _materialize_bindings(
     for entry in entries:
         bind_id = str(entry.get("id"))
         source = str(entry.get("source"))
-        key_param = str(entry.get("key_param"))
+        key_param = entry.get("key_param")
+        key_sql = entry.get("key_sql")
         key_col = str(entry.get("key_column"))
         value_col = str(entry.get("value_column"))
+        value_mode = str(entry.get("value_mode") or "single")
 
-        binding_param = params.get(key_param)
-        if not binding_param or not binding_param.apply_server:
+        if key_param and key_sql:
+            raise ExecutionError(f"Binding {bind_id} cannot specify both key_param and key_sql")
+        if not key_param and not key_sql:
+            raise ExecutionError(f"Binding {bind_id} requires key_param or key_sql")
+        if value_mode not in {"single", "list"}:
+            raise ExecutionError(f"Binding {bind_id} has invalid value_mode: {value_mode}")
+
+        binding_param = params.get(str(key_param)) if key_param else None
+        if key_param and (not binding_param or not binding_param.apply_server):
             raise ExecutionError(f"Binding {bind_id} requires server parameter {key_param}")
-        key_value = _binding_key_value(binding_param.value, key_param)
+        key_value = _binding_key_value(binding_param.value, str(key_param)) if key_param else None
 
         path = cache.binding_path(bind_id)
         if _should_refresh(path, now):
@@ -257,11 +266,69 @@ def _materialize_bindings(
             )
         paths[bind_id] = path
 
-        row = conn.execute("select value from parquet_scan(?) where key = ?", [path.as_posix(), key_value]).fetchone()
-        if not row:
+        if key_sql:
+            rendered_key_sql = _render_binding_key_sql(str(key_sql), params, bind_id)
+            key_view = _binding_key_view_name(bind_id)
+            try:
+                conn.execute(
+                    f"create or replace temp view {key_view} as select * from ({rendered_key_sql}) as key_sub(key)"
+                )
+            except duckdb.Error as exc:  # pragma: no cover - defensive
+                raise ExecutionError(f"Binding {bind_id} key_sql must return exactly one column") from exc
+
+            candidate_keys = conn.execute(f"select * from {key_view}").fetchall()
+            if not candidate_keys:
+                raise ExecutionError(f"No binding keys produced for {bind_id}")
+
+            rows = conn.execute(
+                f"select distinct b.value from parquet_scan(?) as b join {key_view} as k on b.key = k.key",
+                [path.as_posix()],
+            ).fetchall()
+        else:
+            rows = conn.execute("select value from parquet_scan(?) where key = ?", [path.as_posix(), key_value]).fetchall()
+
+        if not rows:
             raise ExecutionError(f"No binding value for {bind_id}")
-        values[bind_id] = str(row[0])
+        if len(rows) > 1 and value_mode == "single":
+            sample = ", ".join(str(row[0]) for row in rows[:3])
+            raise ExecutionError(f"Multiple binding values for {bind_id}: {sample}. Set value_mode: list to allow lists")
+        if value_mode == "list":
+            values[bind_id] = _sql_list_literal([str(row[0]) for row in rows])
+        else:
+            values[bind_id] = str(rows[0][0])
     return _BindingArtifacts(paths=paths, values=values)
+
+
+def _render_binding_key_sql(key_sql: str, params: Mapping[str, _ValidatedParam], bind_id: str) -> str:
+    for match in PLACEHOLDER_RE.finditer(key_sql):
+        if match.group(1).lower() == "param":
+            name = match.group(2).strip()
+            param = params.get(name) or params.get(name.lower()) or params.get(name.upper())
+            if not param:
+                raise ExecutionError(f"Binding {bind_id} key_sql refers to missing param {name}")
+            if not param.apply_server:
+                raise ExecutionError(f"Binding {bind_id} key_sql requires server parameter {name}")
+    replacements = _binding_param_replacements(params)
+    return _substitute_placeholders(key_sql, replacements)
+
+
+def _binding_key_view_name(bind_id: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9_]", "_", bind_id)
+    if not re.match(r"^[A-Za-z_]", sanitized):
+        sanitized = f"b_{sanitized}"
+    return f"__binding_keys_{sanitized}"
+
+
+def _binding_param_replacements(params: Mapping[str, _ValidatedParam]) -> Dict[str, str]:
+    replacements: Dict[str, str] = {}
+    for name, param in params.items():
+        if not param.apply_server:
+            continue
+        key = name.lower()
+        replacements[f"param {key}"] = _param_sql_literal(param.value, param.type)
+        replacements[f"ident {key}"] = _ident_sql_literal(param.value, param.type)
+        replacements[f"path {key}"] = _path_sql_literal(param.value)
+    return replacements
 
 
 def _binding_key_value(raw_value: object | None, name: str) -> object:
@@ -306,7 +373,11 @@ def _build_binding_replacements(entries: Iterable[Mapping[str, object]], binding
         bind_id = str(entry.get("id"))
         value = bindings.values.get(bind_id)
         if value is not None:
-            replacements[f"bind {bind_id.lower()}"] = _escape_sql_string(value)
+            value_mode = str(entry.get("value_mode") or "single")
+            if value_mode == "list":
+                replacements[f"bind {bind_id.lower()}"] = value
+            else:
+                replacements[f"bind {bind_id.lower()}"] = _escape_sql_string(value)
     return replacements
 
 
@@ -484,6 +555,11 @@ def _escape_identifier(value: str) -> str:
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", value):
         raise ExecutionError("Invalid identifier")
     return value
+
+
+def _sql_list_literal(values: Sequence[str]) -> str:
+    escaped = [f"'{_escape_sql_string(val)}'" for val in values]
+    return f"[{', '.join(escaped)}]"
 
 
 def _strip_param_prefix(name: str) -> str:
